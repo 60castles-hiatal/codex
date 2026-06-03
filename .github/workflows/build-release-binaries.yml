@@ -37,8 +37,10 @@ jobs:
         include:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
+            binaries: codex codex-responses-api-proxy codex-app-server bwrap
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+            binaries: codex codex-responses-api-proxy codex-app-server bwrap
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -106,7 +108,11 @@ jobs:
           heartbeat_pid="$!"
           trap 'kill "${heartbeat_pid}" 2>/dev/null || true' EXIT
 
-          cargo build --target "${target}" --release --bin codex-app-server
+          for binary in ${{ matrix.binaries }}; do
+            echo "::group::Build ${binary} for ${target}"
+            cargo build --target "${target}" --release --bin "$binary"
+            echo "::endgroup::"
+          done
 
       - name: Stage binaries
         shell: bash
@@ -116,12 +122,27 @@ jobs:
           dest="${GITHUB_WORKSPACE}/dist/${target}"
           mkdir -p "$dest"
 
-          binary_name="codex-app-server-${target}"
-          cp "target/${target}/release/codex-app-server" "$dest/${binary_name}"
-          chmod 0755 "$dest/${binary_name}"
+          for binary in ${{ matrix.binaries }}; do
+            cp "target/${target}/release/${binary}" "$dest/${binary}-${target}"
+          done
 
-          tar -C "$dest" -czf "$dest/${binary_name}.tar.gz" "$binary_name"
-          zstd -T0 -19 --rm "$dest/${binary_name}"
+          bundle_root="${RUNNER_TEMP}/codex-${target}-bundle"
+          rm -rf "$bundle_root"
+          mkdir -p "$bundle_root/codex-resources"
+          cp "$dest/codex-${target}" "$bundle_root/codex"
+          cp "$dest/bwrap-${target}" "$bundle_root/codex-resources/bwrap"
+          chmod 0755 "$bundle_root/codex" "$bundle_root/codex-resources/bwrap"
+          tar -C "$bundle_root" -cf - codex codex-resources/bwrap |
+            zstd -T0 -19 -o "$dest/codex-${target}-bundle.tar.zst"
+
+          for f in "$dest"/*; do
+            base="$(basename "$f")"
+            if [[ "$base" == *.tar.gz || "$base" == *.tar.zst || "$base" == *.zip ]]; then
+              continue
+            fi
+            tar -C "$dest" -czf "$dest/${base}.tar.gz" "$base"
+            zstd -T0 -19 --rm "$dest/$base"
+          done
 
       - name: Upload release assets
         env:
