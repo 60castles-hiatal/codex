@@ -327,7 +327,7 @@ jobs:
           cargo build --target "$target" --release --timings "${build_args[@]}"
 
       - name: Upload Cargo timings
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cargo-timings-rust-release-${{ matrix.target }}-${{ matrix.bundle }}
           path: codex-rs/target/**/cargo-timings/cargo-timing.html
@@ -360,7 +360,7 @@ jobs:
 
       - if: ${{ runner.os == 'macOS' && env.SIGN_MACOS != 'true' }}
         name: Upload unsigned macOS artifacts
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact_name }}-unsigned
           path: codex-rs/unsigned-dist/${{ matrix.target }}/*
@@ -530,7 +530,7 @@ jobs:
 
       - name: Upload Python runtime wheel
         if: ${{ matrix.bundle == 'primary' && (runner.os != 'macOS' || env.SIGN_MACOS == 'true') }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-runtime-wheel-${{ matrix.target }}
           path: python-runtime-dist/${{ matrix.target }}/*.whl
@@ -573,7 +573,7 @@ jobs:
             zstd -T0 -19 --rm "$dest/$base"
           done
 
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ runner.os != 'macOS' || env.SIGN_MACOS == 'true' }}
         with:
           name: ${{ matrix.artifact_name }}
@@ -793,7 +793,7 @@ jobs:
 
       - name: Upload Python runtime wheel
         if: ${{ matrix.bundle == 'primary' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-runtime-wheel-${{ matrix.target }}
           path: python-runtime-dist/${{ matrix.target }}/*.whl
@@ -815,7 +815,7 @@ jobs:
             zstd -T0 -19 --rm "$dest/$base"
           done
 
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact_name }}
           path: |
@@ -992,7 +992,7 @@ jobs:
 
       - name: Re-upload promoted Linux x64 artifacts
         if: ${{ env.RELEASE_MODE == 'promote_signed' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: x86_64-unknown-linux-musl
           path: dist/x86_64-unknown-linux-musl/*
@@ -1000,7 +1000,7 @@ jobs:
 
       - name: Re-upload promoted Linux arm64 artifacts
         if: ${{ env.RELEASE_MODE == 'promote_signed' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aarch64-unknown-linux-musl
           path: dist/aarch64-unknown-linux-musl/*
@@ -1008,7 +1008,7 @@ jobs:
 
       - name: Re-upload promoted Windows x64 artifacts
         if: ${{ env.RELEASE_MODE == 'promote_signed' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: x86_64-pc-windows-msvc
           path: dist/x86_64-pc-windows-msvc/*
@@ -1016,7 +1016,7 @@ jobs:
 
       - name: Re-upload promoted Windows arm64 artifacts
         if: ${{ env.RELEASE_MODE == 'promote_signed' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: aarch64-pc-windows-msvc
           path: dist/aarch64-pc-windows-msvc/*
