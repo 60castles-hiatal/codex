@@ -1794,14 +1794,14 @@ mod tests {
     }
 
     #[test]
-    fn goal_context_input_item_is_hidden_user_context() {
+    fn goal_context_input_item_is_developer_context() {
         let item = goal_context_input_item("Continue working.".to_string());
 
         assert_eq!(
             item,
             ResponseItem::Message {
                 id: None,
-                role: "user".to_string(),
+                role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "<codex_internal_context source=\"goal\">\nContinue working.\n</codex_internal_context>".to_string(),
                 }],

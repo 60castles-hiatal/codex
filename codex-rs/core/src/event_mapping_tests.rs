@@ -1,3 +1,4 @@
+use super::is_contextual_dev_message_content;
 use super::parse_turn_item;
 use crate::context::ContextualUserFragment;
 use crate::context::InternalContextSource;
@@ -332,6 +333,21 @@ fn internal_model_context_does_not_parse_as_visible_turn_item() {
         phase: None,
     };
 
+    assert!(parse_turn_item(&item).is_none());
+}
+
+#[test]
+fn goal_context_developer_message_is_contextual_dev_content() {
+    let item: ResponseItem = ContextualUserFragment::into(InternalModelContextFragment::new(
+        InternalContextSource::from_static("goal"),
+        "Continue working toward the active thread goal.",
+    ));
+    let ResponseItem::Message { role, content, .. } = &item else {
+        panic!("expected message item");
+    };
+
+    assert_eq!(role, "developer");
+    assert!(is_contextual_dev_message_content(content));
     assert!(parse_turn_item(&item).is_none());
 }
 
