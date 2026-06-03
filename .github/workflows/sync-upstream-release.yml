@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Upstream release tag to mark as synced. Defaults to latest openai/codex release.
+        description: Upstream release tag to sync. Defaults to latest stable openai/codex release.
         required: false
   schedule:
     - cron: "17 */6 * * *"
@@ -17,9 +17,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync:
+  prepare-release:
     if: github.repository == '60castles-hiatal/codex'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    outputs:
+      sync_needed: ${{ steps.release.outputs.sync_needed }}
+      upstream_release_tag: ${{ steps.release.outputs.upstream_release_tag }}
+      fork_release_tag: ${{ steps.release.outputs.fork_release_tag }}
+      state_file: ${{ steps.release.outputs.state_file }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -28,8 +33,8 @@ jobs:
 
       - name: Configure git
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "60castles-hiatal"
+          git config user.email "290249417+60castles-hiatal@users.noreply.github.com"
 
       - name: Check latest upstream release
         id: release
@@ -40,28 +45,134 @@ jobs:
           set -euo pipefail
           state_file=".github/upstream-release-sync.txt"
           if [ -z "${RELEASE_TAG}" ]; then
-            RELEASE_TAG="$(gh release view --repo openai/codex --json tagName -q .tagName)"
+            RELEASE_TAG="$(gh release list \
+              --repo openai/codex \
+              --exclude-drafts \
+              --exclude-pre-releases \
+              --limit 1 \
+              --json tagName \
+              --jq '.[0].tagName')"
           fi
+
+          case "${RELEASE_TAG}" in
+            rust-v*) ;;
+            *)
+              echo "Unexpected upstream release tag: ${RELEASE_TAG}" >&2
+              exit 1
+              ;;
+          esac
+
+          version="${RELEASE_TAG#rust-v}"
+          fork_release_tag="rust-v${version}-60castles.1"
           synced_tag="$(cat "${state_file}" 2>/dev/null || true)"
           if [ "${RELEASE_TAG}" = "${synced_tag}" ]; then
-            echo "sync_needed=false" >> "$GITHUB_OUTPUT"
+            sync_needed=false
           else
-            echo "sync_needed=true" >> "$GITHUB_OUTPUT"
+            sync_needed=true
           fi
-          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
-          echo "state_file=${state_file}" >> "$GITHUB_OUTPUT"
 
-      - name: Merge upstream main
+          {
+            echo "sync_needed=${sync_needed}"
+            echo "upstream_release_tag=${RELEASE_TAG}"
+            echo "fork_release_tag=${fork_release_tag}"
+            echo "state_file=${state_file}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create patched fork release
         if: steps.release.outputs.sync_needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RELEASE_TAG: ${{ steps.release.outputs.upstream_release_tag }}
+          FORK_RELEASE_TAG: ${{ steps.release.outputs.fork_release_tag }}
+        run: |
+          set -euo pipefail
+
+          git remote add upstream https://github.com/openai/codex.git
+          git fetch upstream "refs/tags/${UPSTREAM_RELEASE_TAG}:refs/tags/${UPSTREAM_RELEASE_TAG}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${FORK_RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Fork release tag ${FORK_RELEASE_TAG} already exists; reusing it."
+          else
+            git checkout -B "release/${FORK_RELEASE_TAG}" "${UPSTREAM_RELEASE_TAG}"
+
+            internal_context="codex-rs/core/src/context/internal_model_context.rs"
+            event_mapping="codex-rs/core/src/event_mapping.rs"
+
+            perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\(&self\) -> &[^\n]+\n        )"user"/${1}"developer"/' "${internal_context}"
+
+            if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
+              perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = \[\n)/${1}    "<codex_internal_context",\n/' "${event_mapping}"
+            fi
+
+            if ! grep -A8 'impl ContextualUserFragment for InternalModelContextFragment' "${internal_context}" | grep -q '"developer"'; then
+              echo "Failed to apply developer-role goal context patch." >&2
+              exit 1
+            fi
+            if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
+              echo "Failed to apply contextual developer-prefix patch." >&2
+              exit 1
+            fi
+            if git diff --quiet; then
+              echo "Patch made no changes." >&2
+              exit 1
+            fi
+
+            git add "${internal_context}" "${event_mapping}"
+            git commit -m "Restore developer role for goal context"
+            git tag -a "${FORK_RELEASE_TAG}" -m "Release ${FORK_RELEASE_TAG}"
+            git push origin "HEAD:refs/heads/release/${FORK_RELEASE_TAG}" "refs/tags/${FORK_RELEASE_TAG}"
+          fi
+
+          if gh release view "${FORK_RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "GitHub release ${FORK_RELEASE_TAG} already exists; reusing it."
+          else
+            version="${FORK_RELEASE_TAG#rust-v}"
+            gh release create "${FORK_RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "${version}" \
+              --notes "Unsigned Linux binaries for ${UPSTREAM_RELEASE_TAG} with the 60castles goal-context developer-role patch." \
+              --latest
+          fi
+
+  build-linux-binaries:
+    needs: prepare-release
+    if: needs.prepare-release.outputs.sync_needed == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-release-binaries.yml
+    with:
+      release_tag: ${{ needs.prepare-release.outputs.fork_release_tag }}
+
+  finalise-sync:
+    needs:
+      - prepare-release
+      - build-linux-binaries
+    if: needs.prepare-release.outputs.sync_needed == 'true' && needs.build-linux-binaries.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "60castles-hiatal"
+          git config user.email "290249417+60castles-hiatal@users.noreply.github.com"
+
+      - name: Merge upstream main and record synced release
+        env:
+          UPSTREAM_RELEASE_TAG: ${{ needs.prepare-release.outputs.upstream_release_tag }}
+          STATE_FILE: ${{ needs.prepare-release.outputs.state_file }}
         run: |
           set -euo pipefail
           git remote add upstream https://github.com/openai/codex.git
           git fetch upstream main
           git merge --no-ff --no-commit -X ours upstream/main
-          printf "%s\n" "${{ steps.release.outputs.release_tag }}" > "${{ steps.release.outputs.state_file }}"
-          git add "${{ steps.release.outputs.state_file }}"
-          git commit -m "Sync openai/codex for ${{ steps.release.outputs.release_tag }}"
+          printf "%s\n" "${UPSTREAM_RELEASE_TAG}" > "${STATE_FILE}"
+          git add "${STATE_FILE}"
+          git commit -m "Sync openai/codex for ${UPSTREAM_RELEASE_TAG}"
 
       - name: Push updates
-        if: steps.release.outputs.sync_needed == 'true'
         run: git push origin "HEAD:${GITHUB_REF_NAME}"
