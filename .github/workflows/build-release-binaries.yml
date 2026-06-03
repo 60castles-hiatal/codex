@@ -22,12 +22,12 @@ jobs:
   build-linux:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 360
     defaults:
       run:
         working-directory: codex-rs
     env:
-      CARGO_BUILD_JOBS: "2"
+      CARGO_BUILD_JOBS: "1"
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_RELEASE_LTO: "off"
       RELEASE_TAG: ${{ inputs.release_tag }}
@@ -97,11 +97,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          build_args=()
+          target="${{ matrix.target }}"
+          heartbeat() {
+            while true; do
+              sleep 60
+              echo "Still building ${target} at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            done
+          }
+          heartbeat &
+          heartbeat_pid="$!"
+          trap 'kill "${heartbeat_pid}" 2>/dev/null || true' EXIT
+
           for binary in ${{ matrix.binaries }}; do
-            build_args+=(--bin "$binary")
+            echo "::group::Build ${binary} for ${target}"
+            cargo build --target "${target}" --release --bin "$binary"
+            echo "::endgroup::"
           done
-          cargo build --target "${{ matrix.target }}" --release "${build_args[@]}"
 
       - name: Stage binaries
         shell: bash
