@@ -93,40 +93,6 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
-      - name: Configure arm64 swap
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        shell: bash
-        run: |
-          set -euo pipefail
-          free -h || true
-          df -h "$GITHUB_WORKSPACE" / || true
-
-          available_kb="$(df -k / | awk 'NR == 2 { print $4 }')"
-          swap_mb=4096
-          required_kb="$(((swap_mb + 1024) * 1024))"
-          if [[ "${available_kb}" -lt "${required_kb}" ]]; then
-            echo "Skipping swap: ${available_kb} KiB available on /, need ${required_kb} KiB."
-            exit 0
-          fi
-
-          if sudo fallocate -l "${swap_mb}M" /swapfile; then
-            :
-          elif ! sudo dd if=/dev/zero of=/swapfile bs=1M count="${swap_mb}"; then
-            echo "Skipping swap: failed to allocate /swapfile."
-            sudo rm -f /swapfile
-            exit 0
-          fi
-
-          sudo chmod 600 /swapfile || true
-          if sudo mkswap /swapfile && sudo swapon /swapfile; then
-            echo "Enabled ${swap_mb} MB swap."
-          else
-            echo "Skipping swap: runner rejected mkswap/swapon."
-            sudo rm -f /swapfile
-          fi
-          free -h
-          df -h "$GITHUB_WORKSPACE"
-
       - name: Cargo build
         shell: bash
         run: |
