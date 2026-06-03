@@ -93,6 +93,18 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
+      - name: Configure arm64 swap
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+          df -h "$GITHUB_WORKSPACE"
+
       - name: Cargo build
         shell: bash
         run: |
@@ -106,7 +118,7 @@ jobs:
           }
           heartbeat &
           heartbeat_pid="$!"
-          trap 'kill "${heartbeat_pid}" 2>/dev/null || true' EXIT
+          trap 'status=$?; kill "${heartbeat_pid}" 2>/dev/null || true; if [[ "${status}" -ne 0 ]]; then free -h || true; df -h "$GITHUB_WORKSPACE" || true; ps -eo pid,ppid,pcpu,pmem,rss,vsz,comm --sort=-rss | head -20 || true; fi; exit "${status}"' EXIT
 
           for binary in ${{ matrix.binaries }}; do
             echo "::group::Build ${binary} for ${target}"
