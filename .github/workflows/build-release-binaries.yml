@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: build-release-binaries-${{ inputs.release_tag }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-linux:
@@ -31,8 +31,9 @@ jobs:
       run:
         working-directory: codex-rs
     env:
+      CARGO_BUILD_JOBS: "2"
       CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_RELEASE_LTO: thin
+      CARGO_PROFILE_RELEASE_LTO: "off"
       RELEASE_TAG: ${{ inputs.release_tag }}
     strategy:
       fail-fast: false
