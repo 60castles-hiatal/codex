@@ -131,7 +131,7 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --verify-tag \
               --title "${version}" \
-              --notes "Unsigned Linux binaries for ${UPSTREAM_RELEASE_TAG} with the 60castles goal-context developer-role patch." \
+              --notes "" \
               --latest
           fi
 
