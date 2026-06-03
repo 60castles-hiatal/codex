@@ -1,4 +1,4 @@
-//! Hidden user-context fragment for extension-owned model steering.
+//! Hidden context fragment for extension-owned model steering.
 
 use super::ContextualUserFragment;
 use std::error::Error;
@@ -77,7 +77,7 @@ impl InternalModelContextFragment {
 
 impl ContextualUserFragment for InternalModelContextFragment {
     fn role() -> &'static str {
-        "user"
+        "developer"
     }
 
     fn markers(&self) -> (&'static str, &'static str) {

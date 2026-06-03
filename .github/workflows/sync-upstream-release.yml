@@ -1,0 +1,67 @@
+name: sync-upstream-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Upstream release tag to mark as synced. Defaults to latest openai/codex release.
+        required: false
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-release
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == '60castles-hiatal/codex'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Check latest upstream release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          state_file=".github/upstream-release-sync.txt"
+          if [ -z "${RELEASE_TAG}" ]; then
+            RELEASE_TAG="$(gh release view --repo openai/codex --json tagName -q .tagName)"
+          fi
+          synced_tag="$(cat "${state_file}" 2>/dev/null || true)"
+          if [ "${RELEASE_TAG}" = "${synced_tag}" ]; then
+            echo "sync_needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "sync_needed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "state_file=${state_file}" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream main
+        if: steps.release.outputs.sync_needed == 'true'
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/openai/codex.git
+          git fetch upstream main
+          git merge --no-ff --no-commit -X ours upstream/main
+          printf "%s\n" "${{ steps.release.outputs.release_tag }}" > "${{ steps.release.outputs.state_file }}"
+          git add "${{ steps.release.outputs.state_file }}"
+          git commit -m "Sync openai/codex for ${{ steps.release.outputs.release_tag }}"
+
+      - name: Push updates
+        if: steps.release.outputs.sync_needed == 'true'
+        run: git push origin "HEAD:${GITHUB_REF_NAME}"

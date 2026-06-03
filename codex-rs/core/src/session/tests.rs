@@ -9113,7 +9113,7 @@ async fn active_goal_continuation_runs_again_after_no_tool_turn() -> anyhow::Res
     let goal_context_text = responses
         .requests()
         .into_iter()
-        .flat_map(|request| request.message_input_texts("user"))
+        .flat_map(|request| request.message_input_texts("developer"))
         .find(|text| text.contains("<codex_internal_context source=\"goal\">"))
         .expect("goal context message should be present");
     assert!(goal_context_text.contains("Continue working toward the active thread goal."));
@@ -9382,7 +9382,7 @@ async fn budget_limited_accounting_steers_active_turn_without_aborting() -> anyh
     else {
         panic!("expected one budget-limit steering message, got {pending_input:#?}");
     };
-    assert_eq!("user", role);
+    assert_eq!("developer", role);
     let [ContentItem::InputText { text }] = content.as_slice() else {
         panic!("expected one text span in budget-limit steering message, got {content:#?}");
     };
@@ -9605,7 +9605,7 @@ async fn external_objective_change_steers_active_turn() -> anyhow::Result<()> {
             matches!(
                 item,
                 TurnInput::ResponseItem(ResponseItem::Message { role, content, .. })
-                    if role == "user"
+                    if role == "developer"
                         && content.iter().any(|content| matches!(
                             content,
                             ContentItem::InputText { text }
