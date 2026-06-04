@@ -93,12 +93,20 @@ jobs:
           if git ls-remote --exit-code --tags origin "refs/tags/${FORK_RELEASE_TAG}" >/dev/null 2>&1; then
             echo "Fork release tag ${FORK_RELEASE_TAG} already exists; reusing it."
           else
-            git checkout -B "release/${FORK_RELEASE_TAG}" "${UPSTREAM_RELEASE_TAG}"
+            git checkout -B "release/${FORK_RELEASE_TAG}" origin/main
+
+            # Snapshot the upstream release without pushing upstream workflow history.
+            git rm -r --ignore-unmatch . >/dev/null
+            git checkout "${UPSTREAM_RELEASE_TAG}" -- .
+            # The default Actions token cannot create or update workflow files.
+            # Keep this fork's workflows on release branches; builds run from main.
+            rm -rf .github/workflows
+            git checkout origin/main -- .github/workflows
 
             internal_context="codex-rs/core/src/context/internal_model_context.rs"
             event_mapping="codex-rs/core/src/event_mapping.rs"
 
-            perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\(&self\) -> &[^\n]+\n        )"user"/${1}"developer"/' "${internal_context}"
+            perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\([^)]*\) -> [^\n]+\n        )"user"/${1}"developer"/' "${internal_context}"
 
             if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
               perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = &?\[\n)/${1}    "<codex_internal_context",\n/' "${event_mapping}"
@@ -112,13 +120,17 @@ jobs:
               echo "Failed to apply contextual developer-prefix patch." >&2
               exit 1
             fi
-            if git diff --quiet; then
+            if ! git diff --quiet HEAD -- .github/workflows; then
+              echo "Release snapshot unexpectedly changed workflow files." >&2
+              exit 1
+            fi
+            if git diff --quiet HEAD; then
               echo "Patch made no changes." >&2
               exit 1
             fi
 
-            git add "${internal_context}" "${event_mapping}"
-            git commit -m "Restore developer role for goal context"
+            git add -A
+            git commit -m "Build patched ${UPSTREAM_RELEASE_TAG}"
             git tag -a "${FORK_RELEASE_TAG}" -m "Release ${FORK_RELEASE_TAG}"
             git push origin "HEAD:refs/heads/release/${FORK_RELEASE_TAG}" "refs/tags/${FORK_RELEASE_TAG}"
           fi
@@ -169,9 +181,36 @@ jobs:
           set -euo pipefail
           git remote add upstream https://github.com/openai/codex.git
           git fetch upstream main
-          git merge --no-ff --no-commit -X ours upstream/main
+          git rm -r --ignore-unmatch . >/dev/null
+          git checkout upstream/main -- .
+          # Avoid pushing upstream workflow changes or history with the default Actions token.
+          rm -rf .github/workflows
+          git checkout HEAD -- .github/workflows
+
+          internal_context="codex-rs/core/src/context/internal_model_context.rs"
+          event_mapping="codex-rs/core/src/event_mapping.rs"
+
+          perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\([^)]*\) -> [^\n]+\n        )"user"/${1}"developer"/' "${internal_context}"
+
+          if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
+            perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = &?\[\n)/${1}    "<codex_internal_context",\n/' "${event_mapping}"
+          fi
+
+          if ! grep -A8 'impl ContextualUserFragment for InternalModelContextFragment' "${internal_context}" | grep -q '"developer"'; then
+            echo "Failed to apply developer-role goal context patch." >&2
+            exit 1
+          fi
+          if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
+            echo "Failed to apply contextual developer-prefix patch." >&2
+            exit 1
+          fi
+          if ! git diff --quiet HEAD -- .github/workflows; then
+            echo "Sync snapshot unexpectedly changed workflow files." >&2
+            exit 1
+          fi
+
           printf "%s\n" "${UPSTREAM_RELEASE_TAG}" > "${STATE_FILE}"
-          git add "${STATE_FILE}"
+          git add -A
           git commit -m "Sync openai/codex for ${UPSTREAM_RELEASE_TAG}"
 
       - name: Push updates
