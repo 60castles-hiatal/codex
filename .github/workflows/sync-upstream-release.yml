@@ -101,7 +101,7 @@ jobs:
             perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\(&self\) -> &[^\n]+\n        )"user"/${1}"developer"/' "${internal_context}"
 
             if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
-              perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = \[\n)/${1}    "<codex_internal_context",\n/' "${event_mapping}"
+              perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = &?\[\n)/${1}    "<codex_internal_context",\n/' "${event_mapping}"
             fi
 
             if ! grep -A8 'impl ContextualUserFragment for InternalModelContextFragment' "${internal_context}" | grep -q '"developer"'; then
