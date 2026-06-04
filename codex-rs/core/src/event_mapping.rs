@@ -25,8 +25,8 @@ use crate::context::parse_visible_hook_prompt_message;
 use crate::web_search::web_search_action_detail;
 
 const CONTEXTUAL_DEVELOPER_PREFIXES: &[&str] = &[
-    "<permissions instructions>",
     "<codex_internal_context",
+    "<permissions instructions>",
     "<model_switch>",
     COLLABORATION_MODE_OPEN_TAG,
     REALTIME_CONVERSATION_OPEN_TAG,

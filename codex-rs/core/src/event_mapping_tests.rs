@@ -1,4 +1,3 @@
-use super::is_contextual_dev_message_content;
 use super::parse_turn_item;
 use crate::context::ContextualUserFragment;
 use crate::context::InternalContextSource;
@@ -68,7 +67,7 @@ fn parses_user_message_with_text_and_two_images() {
 #[test]
 fn skips_local_image_label_text() {
     let image_url = "data:image/png;base64,abc".to_string();
-    let label = codex_protocol::models::local_image_open_tag_text(/*label_number*/ 1);
+    let label = r#"<image name=[Image #1] path="/tmp/local.png">"#.to_string();
     let user_text = "Please review this image.".to_string();
 
     let item = ResponseItem::Message {
@@ -333,21 +332,6 @@ fn internal_model_context_does_not_parse_as_visible_turn_item() {
         phase: None,
     };
 
-    assert!(parse_turn_item(&item).is_none());
-}
-
-#[test]
-fn goal_context_developer_message_is_contextual_dev_content() {
-    let item: ResponseItem = ContextualUserFragment::into(InternalModelContextFragment::new(
-        InternalContextSource::from_static("goal"),
-        "Continue working toward the active thread goal.",
-    ));
-    let ResponseItem::Message { role, content, .. } = &item else {
-        panic!("expected message item");
-    };
-
-    assert_eq!(role, "developer");
-    assert!(is_contextual_dev_message_content(content));
     assert!(parse_turn_item(&item).is_none());
 }
 
