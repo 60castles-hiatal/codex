@@ -10,6 +10,7 @@ patch_paths=(
   codex-rs/ext/goal/templates/goals/continuation.md
   codex-rs/ext/goal/tests/goal_extension_backend.rs
 )
+app_server_lib="codex-rs/app-server/src/lib.rs"
 
 if ! git show --format= "${patch_commit}" -- "${patch_paths[@]}" | git apply; then
   echo "Direct goal keep-going patch did not apply; using release-tag fallback." >&2
@@ -29,6 +30,14 @@ if ! git show --format= "${patch_commit}" -- "${patch_paths[@]}" | git apply; th
     codex-rs/ext/goal/src/extension.rs
 fi
 
+if ! grep -q '^#!\[recursion_limit = "' "${app_server_lib}"; then
+  perl -0pi -e 's/\A/#![recursion_limit = "256"]\n/' "${app_server_lib}"
+fi
+
+if ! grep -q '^#!\[recursion_limit = "' "${app_server_lib}"; then
+  echo "Failed to apply app-server recursion-limit build patch." >&2
+  exit 1
+fi
 if grep -q 'json!("blocked")' codex-rs/ext/goal/src/spec.rs; then
   echo "Failed to remove blocked goal status from update_goal schema." >&2
   exit 1
