@@ -101,7 +101,7 @@ jobs:
             # The default Actions token cannot create or update workflow files.
             # Keep this fork's workflows on release branches; builds run from main.
             rm -rf .github/workflows
-            git checkout origin/main -- .github/workflows
+            git checkout origin/main -- .github/workflows .github/fork-patches
 
             internal_context="codex-rs/core/src/context/internal_model_context.rs"
             event_mapping="codex-rs/core/src/event_mapping.rs"
@@ -120,8 +120,11 @@ jobs:
               echo "Failed to apply contextual developer-prefix patch." >&2
               exit 1
             fi
-            if ! git diff --quiet HEAD -- .github/workflows; then
-              echo "Release snapshot unexpectedly changed workflow files." >&2
+
+            bash .github/fork-patches/apply-goal-keep-going.sh
+
+            if ! git diff --quiet HEAD -- .github/workflows .github/fork-patches; then
+              echo "Release snapshot unexpectedly changed fork workflow files." >&2
               exit 1
             fi
             if git diff --quiet HEAD; then
@@ -185,7 +188,7 @@ jobs:
           git checkout upstream/main -- .
           # Avoid pushing upstream workflow changes or history with the default Actions token.
           rm -rf .github/workflows
-          git checkout HEAD -- .github/workflows
+          git checkout HEAD -- .github/workflows .github/fork-patches
 
           internal_context="codex-rs/core/src/context/internal_model_context.rs"
           event_mapping="codex-rs/core/src/event_mapping.rs"
@@ -204,8 +207,11 @@ jobs:
             echo "Failed to apply contextual developer-prefix patch." >&2
             exit 1
           fi
-          if ! git diff --quiet HEAD -- .github/workflows; then
-            echo "Sync snapshot unexpectedly changed workflow files." >&2
+
+          bash .github/fork-patches/apply-goal-keep-going.sh
+
+          if ! git diff --quiet HEAD -- .github/workflows .github/fork-patches; then
+            echo "Sync snapshot unexpectedly changed fork workflow files." >&2
             exit 1
           fi
 
