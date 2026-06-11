@@ -223,25 +223,48 @@ impl GoalToolExecutor {
         invocation: ToolCall,
     ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
         let args: UpdateGoalArgs = parse_arguments(invocation.function_arguments()?)?;
-        if !matches!(
-            args.status,
-            ThreadGoalStatus::Complete | ThreadGoalStatus::Blocked
-        ) {
-            return Err(FunctionCallError::RespondToModel(
-                "update_goal can only mark the existing goal complete or blocked; pause, resume, budget-limited, and usage-limited status changes are controlled by the user or system"
-                    .to_string(),
-            ));
+        match args.status {
+            ThreadGoalStatus::Complete => {}
+            ThreadGoalStatus::Blocked => {
+                self.account_active_goal_progress(
+                    codex_state::GoalAccountingMode::ActiveOnly,
+                    invocation.call_id.as_str(),
+                    BudgetLimitedGoalDisposition::KeepActive,
+                )
+                .await?;
+                let goal = self
+                    .state_db
+                    .thread_goals()
+                    .get_thread_goal(self.thread_id)
+                    .await
+                    .map_err(|err| {
+                        FunctionCallError::RespondToModel(format!(
+                            "failed to read goal after ignored blocked update: {err}"
+                        ))
+                    })?
+                    .ok_or_else(|| {
+                        FunctionCallError::RespondToModel(
+                            "cannot update goal because this thread has no goal".to_string(),
+                        )
+                    })?;
+                return goal_response(
+                    Some(protocol_goal_from_state(goal)),
+                    CompletionBudgetReport::Omit,
+                );
+            }
+            ThreadGoalStatus::Active
+            | ThreadGoalStatus::Paused
+            | ThreadGoalStatus::UsageLimited
+            | ThreadGoalStatus::BudgetLimited => {
+                return Err(FunctionCallError::RespondToModel(
+                    "update_goal can only mark the existing goal complete; pause, resume, budget-limited, and usage-limited status changes are controlled by the user or system"
+                        .to_string(),
+                ));
+            }
         }
 
         self.account_active_goal_progress(
-            match args.status {
-                ThreadGoalStatus::Complete => codex_state::GoalAccountingMode::ActiveOrComplete,
-                ThreadGoalStatus::Blocked => codex_state::GoalAccountingMode::ActiveOrStopped,
-                ThreadGoalStatus::Active
-                | ThreadGoalStatus::Paused
-                | ThreadGoalStatus::UsageLimited
-                | ThreadGoalStatus::BudgetLimited => unreachable!("status validated above"),
-            },
+            codex_state::GoalAccountingMode::ActiveOrComplete,
             invocation.call_id.as_str(),
             BudgetLimitedGoalDisposition::ClearActive,
         )
@@ -256,7 +279,7 @@ impl GoalToolExecutor {
                 self.thread_id,
                 codex_state::GoalUpdate {
                     objective: None,
-                    status: Some(state_status_from_protocol(args.status)),
+                    status: Some(codex_state::ThreadGoalStatus::Complete),
                     token_budget: None,
                     expected_goal_id: None,
                 },
