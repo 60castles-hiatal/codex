@@ -27,8 +27,6 @@ from .generated.v2_all import (
     ReasoningSummaryTextDeltaNotification,
     ReasoningTextDeltaNotification,
     TerminalInteractionNotification,
-    ThreadGoalClearedNotification,
-    ThreadGoalUpdatedNotification,
     ThreadNameUpdatedNotification,
     ThreadStartedNotification,
     ThreadTokenUsageUpdatedNotification,
@@ -72,8 +70,6 @@ NotificationPayload: TypeAlias = (
     | ReasoningTextDeltaNotification
     | TerminalInteractionNotification
     | ThreadNameUpdatedNotification
-    | ThreadGoalClearedNotification
-    | ThreadGoalUpdatedNotification
     | ThreadStartedNotification
     | ThreadTokenUsageUpdatedNotification
     | TurnCompletedNotification

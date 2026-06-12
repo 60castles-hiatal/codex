@@ -251,6 +251,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         model_catalog: None,
         model_verbosity: None,
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+        apps_mcp_path_override: None,
         apps_mcp_product_sku: None,
         realtime_audio: RealtimeAudioConfig::default(),
         experimental_realtime_ws_base_url: None,
@@ -326,7 +327,6 @@ async fn run_turn(thread: &CodexThread, thread_id: &str, prompt: String) -> anyh
             | EventMsg::CollabCloseEnd(_)
             | EventMsg::CollabResumeBegin(_)
             | EventMsg::CollabResumeEnd(_)
-            | EventMsg::SubAgentActivity(_)
             | EventMsg::AgentMessageContentDelta(_)
             | EventMsg::PlanDelta(_)
             | EventMsg::ReasoningContentDelta(_)

@@ -70,11 +70,21 @@ impl FeatureConfig for MultiAgentV2ConfigToml {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RemovedAppsMcpPathOverrideConfigToml {
+pub struct AppsMcpPathOverrideConfigToml {
     #[serde(skip_serializing_if = "Option::is_none")]
-    enabled: Option<bool>,
+    pub enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    path: Option<String>,
+    pub path: Option<String>,
+}
+
+impl FeatureConfig for AppsMcpPathOverrideConfigToml {
+    fn enabled(&self) -> Option<bool> {
+        self.enabled.or(self.path.as_ref().map(|_| true))
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = Some(enabled);
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]

@@ -59,9 +59,18 @@ async fn handle_interrupt_agent(
                 .to_string(),
         ));
     }
-    let receiver_agent_path = receiver_agent.agent_path.clone().ok_or_else(|| {
-        FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
-    })?;
+    session
+        .send_event(
+            &turn,
+            CollabCloseBeginEvent {
+                call_id: call_id.clone(),
+                started_at_ms: now_unix_timestamp_ms(),
+                sender_thread_id: session.thread_id,
+                receiver_thread_id: agent_id,
+            }
+            .into(),
+        )
+        .await;
     let status = session.services.agent_control.get_status(agent_id).await;
     let result = match session
         .services
@@ -72,20 +81,22 @@ async fn handle_interrupt_agent(
         Ok(_) | Err(CodexErr::ThreadNotFound(_)) | Err(CodexErr::InternalAgentDied) => Ok(()),
         Err(err) => Err(collab_agent_error(agent_id, err)),
     };
-    result?;
     session
         .send_event(
             &turn,
-            SubAgentActivityEvent {
-                event_id: call_id,
-                occurred_at_ms: now_unix_timestamp_ms(),
-                agent_thread_id: agent_id,
-                agent_path: receiver_agent_path,
-                kind: SubAgentActivityKind::Interrupted,
+            CollabCloseEndEvent {
+                call_id,
+                completed_at_ms: now_unix_timestamp_ms(),
+                sender_thread_id: session.thread_id,
+                receiver_thread_id: agent_id,
+                receiver_agent_nickname: receiver_agent.agent_nickname,
+                receiver_agent_role: receiver_agent.agent_role,
+                status: status.clone(),
             }
             .into(),
         )
         .await;
+    result?;
 
     Ok(InterruptAgentResult {
         previous_status: status,

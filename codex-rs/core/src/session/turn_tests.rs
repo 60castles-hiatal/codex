@@ -7,21 +7,20 @@ use std::sync::Arc;
 
 struct RewriteAgentMessageContributor;
 
+#[async_trait::async_trait]
 impl TurnItemContributor for RewriteAgentMessageContributor {
-    fn contribute<'a>(
-        &'a self,
-        _thread_store: &'a ExtensionData,
-        _turn_store: &'a ExtensionData,
-        item: &'a mut TurnItem,
-    ) -> codex_extension_api::ExtensionFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            if let TurnItem::AgentMessage(agent_message) = item {
-                agent_message.content = vec![AgentMessageContent::Text {
-                    text: "plan contributed assistant text".to_string(),
-                }];
-            }
-            Ok(())
-        })
+    async fn contribute(
+        &self,
+        _thread_store: &ExtensionData,
+        _turn_store: &ExtensionData,
+        item: &mut TurnItem,
+    ) -> Result<(), String> {
+        if let TurnItem::AgentMessage(agent_message) = item {
+            agent_message.content = vec![AgentMessageContent::Text {
+                text: "plan contributed assistant text".to_string(),
+            }];
+        }
+        Ok(())
     }
 }
 

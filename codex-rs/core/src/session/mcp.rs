@@ -311,10 +311,8 @@ impl Session {
     ) {
         let auth = self.services.auth_manager.auth().await;
         let config = self.get_config().await;
-        let mcp_config = self
-            .services
-            .mcp_manager
-            .runtime_config(config.as_ref())
+        let mcp_config = config
+            .to_mcp_config(self.services.plugins_manager.as_ref())
             .await;
         let tool_plugin_provenance = self
             .services
@@ -338,21 +336,18 @@ impl Session {
                 turn_context.cwd.to_path_buf(),
             ),
         };
-        let mcp_startup_cancellation_token = {
+        {
             let mut guard = self.services.mcp_startup_cancellation_token.lock().await;
             guard.cancel();
-            let cancellation_token = CancellationToken::new();
-            *guard = cancellation_token.clone();
-            cancellation_token
-        };
-        let refreshed_manager = McpConnectionManager::new(
+            *guard = CancellationToken::new();
+        }
+        let (refreshed_manager, cancel_token) = McpConnectionManager::new(
             &mcp_servers,
             store_mode,
             auth_statuses,
             &turn_context.approval_policy,
             turn_context.sub_id.clone(),
             self.get_tx_event(),
-            mcp_startup_cancellation_token,
             turn_context.permission_profile(),
             mcp_runtime_context,
             config.codex_home.to_path_buf(),
@@ -369,6 +364,14 @@ impl Session {
             let current_manager = self.services.mcp_connection_manager.read().await;
             refreshed_manager.set_elicitations_auto_deny(current_manager.elicitations_auto_deny());
         }
+        {
+            let mut guard = self.services.mcp_startup_cancellation_token.lock().await;
+            if guard.is_cancelled() {
+                cancel_token.cancel();
+            }
+            *guard = cancel_token;
+        }
+
         let mut old_manager = {
             let mut manager = self.services.mcp_connection_manager.write().await;
             std::mem::replace(&mut *manager, refreshed_manager)

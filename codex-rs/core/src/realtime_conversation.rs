@@ -625,14 +625,12 @@ async fn prepare_realtime_start(
     if let Some(realtime_ws_base_url) = &config.experimental_realtime_ws_base_url {
         api_provider.base_url = realtime_ws_base_url.clone();
     }
-    let version = params.version.unwrap_or(config.realtime.version);
+    let version = config.realtime.version;
     let session_config = build_realtime_session_config(
         sess,
-        params.model,
         params.prompt,
         params.realtime_session_id,
         params.output_modality,
-        version,
         params.voice,
     )
     .await?;
@@ -666,11 +664,9 @@ async fn prepare_realtime_start(
 
 pub(crate) async fn build_realtime_session_config(
     sess: &Arc<Session>,
-    model: Option<String>,
     prompt: Option<Option<String>>,
     realtime_session_id: Option<String>,
     output_modality: RealtimeOutputModality,
-    version: RealtimeWsVersion,
     voice: Option<RealtimeVoice>,
 ) -> CodexResult<RealtimeSessionConfig> {
     let config = sess.get_config().await;
@@ -693,15 +689,18 @@ pub(crate) async fn build_realtime_session_config(
         (false, false) => format!("{prompt}\n\n{startup_context}"),
     };
     let model = Some(
-        model
-            .or_else(|| config.experimental_realtime_ws_model.clone())
+        config
+            .experimental_realtime_ws_model
+            .clone()
             .unwrap_or_else(|| DEFAULT_REALTIME_MODEL.to_string()),
     );
-    let event_parser = match version {
+    let event_parser = match config.realtime.version {
         RealtimeWsVersion::V1 => RealtimeEventParser::V1,
         RealtimeWsVersion::V2 => RealtimeEventParser::RealtimeV2,
     };
-    if version == RealtimeWsVersion::V1 && matches!(output_modality, RealtimeOutputModality::Text) {
+    if config.realtime.version == RealtimeWsVersion::V1
+        && matches!(output_modality, RealtimeOutputModality::Text)
+    {
         return Err(CodexErr::InvalidRequest(
             "text realtime output modality requires realtime v2".to_string(),
         ));
@@ -712,8 +711,8 @@ pub(crate) async fn build_realtime_session_config(
     };
     let voice = voice
         .or(config.realtime.voice)
-        .unwrap_or_else(|| default_realtime_voice(version));
-    validate_realtime_voice(version, voice)?;
+        .unwrap_or_else(|| default_realtime_voice(config.realtime.version));
+    validate_realtime_voice(config.realtime.version, voice)?;
     Ok(RealtimeSessionConfig {
         instructions: prompt,
         model,
@@ -738,6 +737,10 @@ fn prefix_realtime_text(text: String, prefix: &str, session_kind: RealtimeSessio
         return text;
     }
     format!("{prefix}{text}")
+}
+
+pub(crate) fn prefix_realtime_v2_text(text: String, prefix: &str) -> String {
+    prefix_realtime_text(text, prefix, RealtimeSessionKind::V2)
 }
 
 fn validate_realtime_voice(version: RealtimeWsVersion, voice: RealtimeVoice) -> CodexResult<()> {

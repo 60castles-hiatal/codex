@@ -10,7 +10,6 @@ use crate::ExecServerError;
 use crate::ProcessId;
 use crate::protocol::ExecParams;
 use crate::protocol::ProcessOutputChunk;
-use crate::protocol::ProcessSignal;
 use crate::protocol::ReadResponse;
 use crate::protocol::WriteResponse;
 
@@ -178,8 +177,6 @@ pub trait ExecProcess: Send + Sync {
     ) -> Result<ReadResponse, ExecServerError>;
 
     async fn write(&self, chunk: Vec<u8>) -> Result<WriteResponse, ExecServerError>;
-
-    async fn signal(&self, signal: ProcessSignal) -> Result<(), ExecServerError>;
 
     async fn terminate(&self) -> Result<(), ExecServerError>;
 }

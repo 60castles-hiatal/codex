@@ -10,7 +10,6 @@ use codex_protocol::config_types::EnvironmentVariablePattern;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::shell_environment;
 use codex_utils_pty::ExecCommandSession;
-use codex_utils_pty::ProcessSignal as PtyProcessSignal;
 use codex_utils_pty::TerminalSize;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
@@ -34,11 +33,8 @@ use crate::protocol::ExecOutputStream;
 use crate::protocol::ExecParams;
 use crate::protocol::ExecResponse;
 use crate::protocol::ProcessOutputChunk;
-use crate::protocol::ProcessSignal;
 use crate::protocol::ReadParams;
 use crate::protocol::ReadResponse;
-use crate::protocol::SignalParams;
-use crate::protocol::SignalResponse;
 use crate::protocol::TerminateParams;
 use crate::protocol::TerminateResponse;
 use crate::protocol::WriteParams;
@@ -276,6 +272,7 @@ impl LocalProcess {
         &self,
         params: ReadParams,
     ) -> Result<ReadResponse, JSONRPCErrorError> {
+        let _process_id = params.process_id.clone();
         let after_seq = params.after_seq.unwrap_or(0);
         let max_bytes = params.max_bytes.unwrap_or(usize::MAX);
         let wait = Duration::from_millis(params.wait_ms.unwrap_or(0));
@@ -354,6 +351,7 @@ impl LocalProcess {
         &self,
         params: WriteParams,
     ) -> Result<WriteResponse, JSONRPCErrorError> {
+        let _process_id = params.process_id.clone();
         let _input_bytes = params.chunk.0.len();
         let writer_tx = {
             let process_map = self.inner.processes.lock().await;
@@ -385,33 +383,11 @@ impl LocalProcess {
         })
     }
 
-    pub(crate) async fn signal_process(
-        &self,
-        params: SignalParams,
-    ) -> Result<SignalResponse, JSONRPCErrorError> {
-        {
-            let process_map = self.inner.processes.lock().await;
-            match process_map.get(&params.process_id) {
-                Some(ProcessEntry::Running(process)) => {
-                    if process.exit_code.is_some() {
-                        return Ok(SignalResponse {});
-                    }
-                    process
-                        .session
-                        .signal(pty_process_signal(params.signal))
-                        .map_err(|err| internal_error(format!("failed to signal process: {err}")))?
-                }
-                Some(ProcessEntry::Starting) | None => {}
-            }
-        }
-
-        Ok(SignalResponse {})
-    }
-
     pub(crate) async fn terminate_process(
         &self,
         params: TerminateParams,
     ) -> Result<TerminateResponse, JSONRPCErrorError> {
+        let _process_id = params.process_id.clone();
         let running = {
             let process_map = self.inner.processes.lock().await;
             match process_map.get(&params.process_id) {
@@ -507,10 +483,6 @@ impl ExecProcess for LocalExecProcess {
         self.backend.write(&self.process_id, chunk).await
     }
 
-    async fn signal(&self, signal: ProcessSignal) -> Result<(), ExecServerError> {
-        self.backend.signal(&self.process_id, signal).await
-    }
-
     async fn terminate(&self) -> Result<(), ExecServerError> {
         self.backend.terminate(&self.process_id).await
     }
@@ -547,20 +519,6 @@ impl LocalProcess {
         .map_err(map_handler_error)
     }
 
-    async fn signal(
-        &self,
-        process_id: &ProcessId,
-        signal: ProcessSignal,
-    ) -> Result<(), ExecServerError> {
-        self.signal_process(SignalParams {
-            process_id: process_id.clone(),
-            signal,
-        })
-        .await
-        .map_err(map_handler_error)?;
-        Ok(())
-    }
-
     async fn terminate(&self, process_id: &ProcessId) -> Result<(), ExecServerError> {
         self.terminate_process(TerminateParams {
             process_id: process_id.clone(),
@@ -568,12 +526,6 @@ impl LocalProcess {
         .await
         .map_err(map_handler_error)?;
         Ok(())
-    }
-}
-
-fn pty_process_signal(signal: ProcessSignal) -> PtyProcessSignal {
-    match signal {
-        ProcessSignal::Interrupt => PtyProcessSignal::Interrupt,
     }
 }
 
