@@ -571,7 +571,7 @@ async fn turn_error_usage_limit_accounts_progress_and_clears_accounting() -> any
 }
 
 #[tokio::test]
-async fn turn_error_keeps_goal_active() -> anyhow::Result<()> {
+async fn turn_error_blocks_goal() -> anyhow::Result<()> {
     let runtime = test_runtime().await?;
     let thread_id = test_thread_id()?;
     seed_thread_metadata(runtime.as_ref(), thread_id).await?;
@@ -596,7 +596,7 @@ async fn turn_error_keeps_goal_active() -> anyhow::Result<()> {
         .get_thread_goal(thread_id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("goal should exist"))?;
-    assert_eq!(codex_state::ThreadGoalStatus::Active, goal.status);
+    assert_eq!(codex_state::ThreadGoalStatus::Blocked, goal.status);
     Ok(())
 }
 
@@ -754,7 +754,7 @@ async fn usage_limit_stale_turn_does_not_stop_current_goal() -> anyhow::Result<(
 }
 
 #[tokio::test]
-async fn update_goal_blocked_keeps_goal_active_and_accounts_progress() -> anyhow::Result<()> {
+async fn update_goal_can_block_and_accounts_final_progress() -> anyhow::Result<()> {
     let runtime = test_runtime().await?;
     let thread_id = test_thread_id()?;
     seed_thread_metadata(runtime.as_ref(), thread_id).await?;
@@ -796,7 +796,7 @@ async fn update_goal_blocked_keeps_goal_active_and_accounts_progress() -> anyhow
             "goal": {
                 "threadId": thread_id,
                 "objective": "ship goal extension backend",
-                "status": "active",
+                "status": "blocked",
                 "tokensUsed": 23,
                 "timeUsedSeconds": 0,
                 "createdAt": result["goal"]["createdAt"],
@@ -813,15 +813,23 @@ async fn update_goal_blocked_keeps_goal_active_and_accounts_progress() -> anyhow
         .await?
         .ok_or_else(|| anyhow::anyhow!("goal should exist"))?;
     assert_eq!(23, goal.tokens_used);
-    assert_eq!(codex_state::ThreadGoalStatus::Active, goal.status);
+    assert_eq!(codex_state::ThreadGoalStatus::Blocked, goal.status);
 
     assert_eq!(
-        vec![CapturedGoalEvent {
-            event_id: "call-update-goal".to_string(),
-            turn_id: Some("turn-1".to_string()),
-            status: ThreadGoalStatus::Active,
-            tokens_used: 23,
-        }],
+        vec![
+            CapturedGoalEvent {
+                event_id: "call-update-goal".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                status: ThreadGoalStatus::Active,
+                tokens_used: 23,
+            },
+            CapturedGoalEvent {
+                event_id: "call-update-goal".to_string(),
+                turn_id: Some("turn-1".to_string()),
+                status: ThreadGoalStatus::Blocked,
+                tokens_used: 23,
+            },
+        ],
         harness.sink.goal_events()
     );
     Ok(())

@@ -101,15 +101,15 @@ jobs:
             # The default Actions token cannot create or update workflow files.
             # Keep this fork's workflows on release branches; builds run from main.
             rm -rf .github/workflows
-            git checkout origin/main -- .github/workflows .github/fork-patches
+            git checkout origin/main -- .github/workflows
 
             internal_context="codex-rs/core/src/context/internal_model_context.rs"
             event_mapping="codex-rs/core/src/event_mapping.rs"
 
-            perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\([^)]*\) -> [^\n]+\n        )"user"/${1}"developer"/' "${internal_context}"
+            perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\([^)]*\) -> [^\n]+\n        )"user"/\1"developer"/' "${internal_context}"
 
             if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
-              perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = &?\[\n)/${1}    "<codex_internal_context",\n/' "${event_mapping}"
+              perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = &?\[\n)/\1    "<codex_internal_context",\n/' "${event_mapping}"
             fi
 
             if ! grep -A8 'impl ContextualUserFragment for InternalModelContextFragment' "${internal_context}" | grep -q '"developer"'; then
@@ -120,11 +120,23 @@ jobs:
               echo "Failed to apply contextual developer-prefix patch." >&2
               exit 1
             fi
-
-            bash .github/fork-patches/apply-goal-keep-going.sh
-
-            if ! git diff --quiet HEAD -- .github/workflows .github/fork-patches; then
-              echo "Release snapshot unexpectedly changed fork workflow files." >&2
+            goal_spec="codex-rs/ext/goal/src/spec.rs"
+            goal_continuation="codex-rs/ext/goal/templates/goals/continuation.md"
+            app_server_lib="codex-rs/app-server/src/lib.rs"
+            if ! grep -q '^#!\[recursion_limit = "' "${app_server_lib}"; then
+              perl -0pi -e 's/\A/#![recursion_limit = "256"]\n/' "${app_server_lib}"
+            fi
+            perl -0pi -e 's/vec!\[json!\("complete"\), json!\("blocked"\)\]/vec![json!("complete")]/' "${goal_spec}"
+            perl -0pi -e 's/Required\. Set to \x60complete\x60 only when the objective is achieved and no required work remains\. Set to \x60blocked\x60.*?fresh blocked audit\./Required. Set to \x60complete\x60 only when the objective is achieved and no required work remains./s' "${goal_spec}"
+            perl -0pi -e 's/Use this tool only to mark the goal achieved or genuinely blocked\./Use this tool only to mark the goal achieved./' "${goal_spec}"
+            perl -0pi -e 's/\nSet status to \x60blocked\x60.*?Do not use \x60blocked\x60 merely because.*?\n/\n/s' "${goal_spec}"
+            perl -0pi -e 's/Blocked audit:\n.*?Do not call update_goal unless the goal is complete or the strict blocked audit above is satisfied\. Do not mark a goal complete merely because the budget is nearly exhausted or because you are stopping work\./Keep-going policy:\n- Do not call update_goal with status "blocked".\n- If work is blocked by missing input, unavailable external state, failing infrastructure, uncertainty, or repeated errors, leave the goal active and keep looking for useful progress.\n- Do not mark a goal complete merely because progress is currently blocked, the budget is nearly exhausted, or because you are stopping work.\n\nDo not call update_goal unless the goal is complete./s' "${goal_continuation}"
+            if grep -q 'json!("blocked")\|status to .*blocked\|Blocked audit:' "${goal_spec}" "${goal_continuation}"; then
+              echo "Failed to apply keep-going goal instructions." >&2
+              exit 1
+            fi
+            if ! git diff --quiet HEAD -- .github/workflows; then
+              echo "Release snapshot unexpectedly changed workflow files." >&2
               exit 1
             fi
             if git diff --quiet HEAD; then
@@ -188,15 +200,15 @@ jobs:
           git checkout upstream/main -- .
           # Avoid pushing upstream workflow changes or history with the default Actions token.
           rm -rf .github/workflows
-          git checkout HEAD -- .github/workflows .github/fork-patches
+          git checkout HEAD -- .github/workflows
 
           internal_context="codex-rs/core/src/context/internal_model_context.rs"
           event_mapping="codex-rs/core/src/event_mapping.rs"
 
-          perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\([^)]*\) -> [^\n]+\n        )"user"/${1}"developer"/' "${internal_context}"
+          perl -0pi -e 's/(impl ContextualUserFragment for InternalModelContextFragment \{\n    fn role\([^)]*\) -> [^\n]+\n        )"user"/\1"developer"/' "${internal_context}"
 
           if ! grep -q '"<codex_internal_context"' "${event_mapping}"; then
-            perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = &?\[\n)/${1}    "<codex_internal_context",\n/' "${event_mapping}"
+            perl -0pi -e 's/(const CONTEXTUAL_DEVELOPER_PREFIXES: &\[&str\] = &?\[\n)/\1    "<codex_internal_context",\n/' "${event_mapping}"
           fi
 
           if ! grep -A8 'impl ContextualUserFragment for InternalModelContextFragment' "${internal_context}" | grep -q '"developer"'; then
@@ -207,11 +219,23 @@ jobs:
             echo "Failed to apply contextual developer-prefix patch." >&2
             exit 1
           fi
-
-          bash .github/fork-patches/apply-goal-keep-going.sh
-
-          if ! git diff --quiet HEAD -- .github/workflows .github/fork-patches; then
-            echo "Sync snapshot unexpectedly changed fork workflow files." >&2
+          goal_spec="codex-rs/ext/goal/src/spec.rs"
+          goal_continuation="codex-rs/ext/goal/templates/goals/continuation.md"
+          app_server_lib="codex-rs/app-server/src/lib.rs"
+          if ! grep -q '^#!\[recursion_limit = "' "${app_server_lib}"; then
+            perl -0pi -e 's/\A/#![recursion_limit = "256"]\n/' "${app_server_lib}"
+          fi
+          perl -0pi -e 's/vec!\[json!\("complete"\), json!\("blocked"\)\]/vec![json!("complete")]/' "${goal_spec}"
+          perl -0pi -e 's/Required\. Set to \x60complete\x60 only when the objective is achieved and no required work remains\. Set to \x60blocked\x60.*?fresh blocked audit\./Required. Set to \x60complete\x60 only when the objective is achieved and no required work remains./s' "${goal_spec}"
+          perl -0pi -e 's/Use this tool only to mark the goal achieved or genuinely blocked\./Use this tool only to mark the goal achieved./' "${goal_spec}"
+          perl -0pi -e 's/\nSet status to \x60blocked\x60.*?Do not use \x60blocked\x60 merely because.*?\n/\n/s' "${goal_spec}"
+          perl -0pi -e 's/Blocked audit:\n.*?Do not call update_goal unless the goal is complete or the strict blocked audit above is satisfied\. Do not mark a goal complete merely because the budget is nearly exhausted or because you are stopping work\./Keep-going policy:\n- Do not call update_goal with status "blocked".\n- If work is blocked by missing input, unavailable external state, failing infrastructure, uncertainty, or repeated errors, leave the goal active and keep looking for useful progress.\n- Do not mark a goal complete merely because progress is currently blocked, the budget is nearly exhausted, or because you are stopping work.\n\nDo not call update_goal unless the goal is complete./s' "${goal_continuation}"
+          if grep -q 'json!("blocked")\|status to .*blocked\|Blocked audit:' "${goal_spec}" "${goal_continuation}"; then
+            echo "Failed to apply keep-going goal instructions." >&2
+            exit 1
+          fi
+          if ! git diff --quiet HEAD -- .github/workflows; then
+            echo "Sync snapshot unexpectedly changed workflow files." >&2
             exit 1
           fi
 

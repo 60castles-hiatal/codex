@@ -31,6 +31,11 @@ pub(crate) struct GoalRuntimeConfig {
     pub(crate) tools_available_for_thread: bool,
 }
 
+pub(crate) enum ActiveGoalStopReason {
+    TurnError,
+    UsageLimit,
+}
+
 struct GoalRuntimeInner {
     thread_id: ThreadId,
     state_dbs: Arc<codex_state::StateRuntime>,
@@ -231,45 +236,16 @@ impl GoalRuntimeHandle {
     }
 
     pub async fn usage_limit_active_goal_for_turn(&self, turn_id: &str) -> Result<(), String> {
-        self.stop_active_goal_for_turn(turn_id).await
+        self.stop_active_goal_for_turn(turn_id, ActiveGoalStopReason::UsageLimit)
+            .await
     }
 
-    /// Accounts the failed turn but leaves its active goal eligible for continuation.
-    pub(crate) async fn continue_active_goal_after_turn_error(
+    /// Accounts the ending turn and stops its active goal after a terminal error.
+    pub(crate) async fn stop_active_goal_for_turn(
         &self,
         turn_id: &str,
+        reason: ActiveGoalStopReason,
     ) -> Result<(), String> {
-        if !self.is_enabled() {
-            return Ok(());
-        }
-
-        {
-            // Hold this through accounting so external goal mutations and idle
-            // continuation cannot interleave with the failed turn cleanup.
-            let _goal_state_permit = self.goal_state_permit().await?;
-            if !self
-                .inner
-                .accounting_state
-                .turn_is_current_active_goal(turn_id)
-            {
-                return Ok(());
-            }
-
-            self.account_active_goal_progress(
-                turn_id,
-                &format!("{turn_id}:turn-error-progress"),
-                codex_state::GoalAccountingMode::ActiveOnly,
-                BudgetLimitedGoalDisposition::ClearActive,
-            )
-            .await?;
-            self.inner.accounting_state.clear_active_goal();
-        }
-
-        self.continue_if_idle().await
-    }
-
-    /// Accounts the ending turn and stops its active goal after a hard usage limit.
-    pub(crate) async fn stop_active_goal_for_turn(&self, turn_id: &str) -> Result<(), String> {
         if !self.is_enabled() {
             return Ok(());
         }
@@ -285,8 +261,14 @@ impl GoalRuntimeHandle {
             return Ok(());
         }
 
-        let event_name = "usage-limit";
-        let status = codex_state::ThreadGoalStatus::UsageLimited;
+        let (event_name, status) = match reason {
+            ActiveGoalStopReason::TurnError => {
+                ("turn-error", codex_state::ThreadGoalStatus::Blocked)
+            }
+            ActiveGoalStopReason::UsageLimit => {
+                ("usage-limit", codex_state::ThreadGoalStatus::UsageLimited)
+            }
+        };
         self.account_active_goal_progress(
             turn_id,
             &format!("{turn_id}:{event_name}-progress"),
