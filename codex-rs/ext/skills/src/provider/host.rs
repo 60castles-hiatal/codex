@@ -55,12 +55,12 @@ impl SkillProvider for HostSkillProvider {
             };
             let Some(skill) = host_loaded_skills.outcome().skills.iter().find(|skill| {
                 let skill_path = skill.path_to_skills_md.to_string_lossy();
-                skill_path == request.resource.as_str()
-                    || skill_path.replace('\\', "/") == request.resource.as_str()
+                skill_path == request.resource.0.as_str()
+                    || skill_path.replace('\\', "/") == request.resource.0
             }) else {
                 return Err(SkillProviderError::new(format!(
                     "host skill resource is not loaded: {}",
-                    request.resource.as_str()
+                    request.resource.0
                 )));
             };
 
@@ -70,7 +70,7 @@ impl SkillProvider for HostSkillProvider {
                 .map_err(|err| {
                     SkillProviderError::new(format!(
                         "failed to read host skill resource {}: {err}",
-                        request.resource.as_str()
+                        request.resource.0
                     ))
                 })?;
 
@@ -117,7 +117,7 @@ fn catalog_entry_from_skill(skill: &SkillMetadata, enabled: bool) -> SkillCatalo
         SkillAuthority::new(SkillSourceKind::Host, HOST_AUTHORITY_ID),
         skill.name.clone(),
         skill.description.clone(),
-        SkillResourceId::new(skill_path),
+        SkillResourceId(skill_path),
     )
     .with_short_description(skill.short_description.clone())
     .with_display_path(display_path)

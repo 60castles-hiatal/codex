@@ -311,14 +311,12 @@ impl RealtimeE2eHarness {
             .mcp
             .send_thread_realtime_start_request(ThreadRealtimeStartParams {
                 thread_id: self.thread_id.clone(),
-                model: None,
                 output_modality: RealtimeOutputModality::Audio,
                 prompt: Some(Some("backend prompt".to_string())),
                 realtime_session_id: None,
                 transport: Some(ThreadRealtimeStartTransport::Webrtc {
                     sdp: offer_sdp.to_string(),
                 }),
-                version: None,
                 voice: None,
             })
             .await?;
@@ -558,12 +556,10 @@ async fn realtime_conversation_streams_v2_notifications() -> Result<()> {
     let start_request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
             thread_id: thread_start.thread.id.clone(),
-            model: Some("realtime-treatment-model".to_string()),
             output_modality: RealtimeOutputModality::Audio,
             prompt: None,
             realtime_session_id: None,
             transport: None,
-            version: None,
             voice: Some(RealtimeVoice::Cedar),
         })
         .await?;
@@ -591,10 +587,6 @@ async fn realtime_conversation_streams_v2_notifications() -> Result<()> {
     assert_eq!(
         startup_context_request.body_json()["session"]["audio"]["output"]["voice"],
         "cedar"
-    );
-    assert_eq!(
-        realtime_server.single_handshake().uri(),
-        "/v1/realtime?model=realtime-treatment-model"
     );
     assert_eq!(
         startup_context_request.body_json()["session"]["output_modalities"],
@@ -813,12 +805,10 @@ async fn realtime_text_output_modality_requests_text_output_and_final_transcript
     let start_request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
             thread_id: thread_start.thread.id.clone(),
-            model: None,
             output_modality: RealtimeOutputModality::Text,
             prompt: None,
             realtime_session_id: None,
             transport: None,
-            version: None,
             voice: None,
         })
         .await?;
@@ -989,12 +979,10 @@ async fn realtime_conversation_stop_emits_closed_notification() -> Result<()> {
     let start_request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
             thread_id: thread_start.thread.id.clone(),
-            model: None,
             output_modality: RealtimeOutputModality::Audio,
             prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
-            version: None,
             voice: None,
         })
         .await?;
@@ -1088,14 +1076,12 @@ async fn realtime_webrtc_start_emits_sdp_notification() -> Result<()> {
     let start_request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
             thread_id: thread_id.clone(),
-            model: None,
             output_modality: RealtimeOutputModality::Audio,
             prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ThreadRealtimeStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
             }),
-            version: None,
             voice: None,
         })
         .await?;
@@ -2005,14 +1991,12 @@ async fn realtime_webrtc_start_surfaces_backend_error() -> Result<()> {
     let start_request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
             thread_id: thread_start.thread.id,
-            model: None,
             output_modality: RealtimeOutputModality::Audio,
             prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: Some(ThreadRealtimeStartTransport::Webrtc {
                 sdp: "v=offer\r\n".to_string(),
             }),
-            version: None,
             voice: None,
         })
         .await?;
@@ -2066,12 +2050,10 @@ async fn realtime_conversation_requires_feature_flag() -> Result<()> {
     let start_request_id = mcp
         .send_thread_realtime_start_request(ThreadRealtimeStartParams {
             thread_id: thread_start.thread.id.clone(),
-            model: None,
             output_modality: RealtimeOutputModality::Audio,
             prompt: Some(Some("backend prompt".to_string())),
             realtime_session_id: None,
             transport: None,
-            version: None,
             voice: None,
         })
         .await?;

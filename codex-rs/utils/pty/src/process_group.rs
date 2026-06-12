@@ -118,10 +118,15 @@ pub fn kill_process_group_by_pid(_pid: u32) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn signal_process_group_id(pgid: libc::pid_t, signal: libc::c_int) -> io::Result<bool> {
+/// Send SIGTERM to a specific process group ID (best-effort).
+///
+/// Returns `Ok(true)` when SIGTERM was delivered to an existing group and
+/// `Ok(false)` when the group no longer exists.
+pub fn terminate_process_group(process_group_id: u32) -> io::Result<bool> {
     use std::io::ErrorKind;
 
-    let result = unsafe { libc::killpg(pgid, signal) };
+    let pgid = process_group_id as libc::pid_t;
+    let result = unsafe { libc::killpg(pgid, libc::SIGTERM) };
     if result == -1 {
         let err = io::Error::last_os_error();
         if err.kind() == ErrorKind::NotFound || err.raw_os_error() == Some(libc::ESRCH) {
@@ -133,15 +138,6 @@ fn signal_process_group_id(pgid: libc::pid_t, signal: libc::c_int) -> io::Result
     Ok(true)
 }
 
-#[cfg(unix)]
-/// Send SIGTERM to a specific process group ID (best-effort).
-///
-/// Returns `Ok(true)` when SIGTERM was delivered to an existing group and
-/// `Ok(false)` when the group no longer exists.
-pub fn terminate_process_group(process_group_id: u32) -> io::Result<bool> {
-    signal_process_group_id(process_group_id as libc::pid_t, libc::SIGTERM)
-}
-
 #[cfg(not(unix))]
 /// No-op on non-Unix platforms.
 pub fn terminate_process_group(_process_group_id: u32) -> io::Result<bool> {
@@ -149,21 +145,20 @@ pub fn terminate_process_group(_process_group_id: u32) -> io::Result<bool> {
 }
 
 #[cfg(unix)]
-/// Send SIGINT to a specific process group ID (best-effort).
-pub fn interrupt_process_group(process_group_id: u32) -> io::Result<()> {
-    signal_process_group_id(process_group_id as libc::pid_t, libc::SIGINT).map(|_| ())
-}
-
-#[cfg(not(unix))]
-/// No-op on non-Unix platforms.
-pub fn interrupt_process_group(_process_group_id: u32) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
 /// Kill a specific process group ID (best-effort).
 pub fn kill_process_group(process_group_id: u32) -> io::Result<()> {
-    signal_process_group_id(process_group_id as libc::pid_t, libc::SIGKILL).map(|_| ())
+    use std::io::ErrorKind;
+
+    let pgid = process_group_id as libc::pid_t;
+    let result = unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    if result == -1 {
+        let err = io::Error::last_os_error();
+        if err.kind() != ErrorKind::NotFound && err.raw_os_error() != Some(libc::ESRCH) {
+            return Err(err);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(not(unix))]

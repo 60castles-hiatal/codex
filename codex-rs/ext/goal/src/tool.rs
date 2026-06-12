@@ -17,8 +17,6 @@ use serde::Serialize;
 
 use crate::accounting::BudgetLimitedGoalDisposition;
 use crate::accounting::GoalAccountingState;
-use crate::analytics::GoalAnalytics;
-use crate::analytics::GoalEventAttribution;
 use crate::events::GoalEventEmitter;
 use crate::metrics::GoalMetrics;
 use crate::spec::CREATE_GOAL_TOOL_NAME;
@@ -34,7 +32,6 @@ pub(crate) struct GoalToolExecutor {
     thread_id: ThreadId,
     state_db: Arc<codex_state::StateRuntime>,
     accounting_state: Arc<GoalAccountingState>,
-    analytics: GoalAnalytics,
     event_emitter: GoalEventEmitter,
     metrics: GoalMetrics,
 }
@@ -78,7 +75,6 @@ impl GoalToolExecutor {
         thread_id: ThreadId,
         state_db: Arc<codex_state::StateRuntime>,
         accounting_state: Arc<GoalAccountingState>,
-        analytics: GoalAnalytics,
         event_emitter: GoalEventEmitter,
         metrics: GoalMetrics,
     ) -> Self {
@@ -87,7 +83,6 @@ impl GoalToolExecutor {
             thread_id,
             state_db,
             accounting_state,
-            analytics,
             event_emitter,
             metrics,
         }
@@ -97,7 +92,6 @@ impl GoalToolExecutor {
         thread_id: ThreadId,
         state_db: Arc<codex_state::StateRuntime>,
         accounting_state: Arc<GoalAccountingState>,
-        analytics: GoalAnalytics,
         event_emitter: GoalEventEmitter,
         metrics: GoalMetrics,
     ) -> Self {
@@ -106,7 +100,6 @@ impl GoalToolExecutor {
             thread_id,
             state_db,
             accounting_state,
-            analytics,
             event_emitter,
             metrics,
         }
@@ -116,7 +109,6 @@ impl GoalToolExecutor {
         thread_id: ThreadId,
         state_db: Arc<codex_state::StateRuntime>,
         accounting_state: Arc<GoalAccountingState>,
-        analytics: GoalAnalytics,
         event_emitter: GoalEventEmitter,
         metrics: GoalMetrics,
     ) -> Self {
@@ -125,7 +117,6 @@ impl GoalToolExecutor {
             thread_id,
             state_db,
             accounting_state,
-            analytics,
             event_emitter,
             metrics,
         }
@@ -200,7 +191,7 @@ impl GoalToolExecutor {
             .map_err(|err| FunctionCallError::RespondToModel(format!("failed to create goal: {err}")))?
             .ok_or_else(|| {
                 FunctionCallError::RespondToModel(
-                    "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first"
+                    "cannot create a new goal because this thread already has a goal; use update_goal only when the existing goal is complete"
                         .to_string(),
                 )
             })?;
@@ -209,10 +200,6 @@ impl GoalToolExecutor {
             .accounting_state
             .mark_current_turn_goal_active(goal.goal_id.clone());
         self.metrics.record_created();
-        self.analytics.created(
-            &goal,
-            GoalEventAttribution::Turn(invocation.turn_id.as_str()),
-        );
         let goal = protocol_goal_from_state(goal);
         self.emit_goal_updated_from_tool_call(&invocation, turn_id, goal.clone());
         goal_response(Some(goal), CompletionBudgetReport::Omit)
@@ -272,11 +259,6 @@ impl GoalToolExecutor {
             })?;
         self.metrics
             .record_terminal_if_status_changed(previous_status, &goal);
-        self.analytics.status_changed(
-            &goal,
-            previous_status,
-            GoalEventAttribution::Turn(invocation.turn_id.as_str()),
-        );
         let goal = protocol_goal_from_state(goal);
         let turn_id = self.accounting_state.clear_current_turn_goal();
         self.emit_goal_updated_from_tool_call(&invocation, turn_id, goal.clone());
@@ -342,13 +324,6 @@ impl GoalToolExecutor {
             codex_state::GoalAccountingOutcome::Updated(goal) => {
                 self.metrics
                     .record_terminal_if_status_changed(previous_status, &goal);
-                self.analytics
-                    .usage_accounted(&goal, GoalEventAttribution::Turn(turn_id.as_str()));
-                self.analytics.status_changed(
-                    &goal,
-                    previous_status,
-                    GoalEventAttribution::Turn(turn_id.as_str()),
-                );
                 self.accounting_state.mark_progress_accounted_for_status(
                     turn_id.as_str(),
                     &snapshot,

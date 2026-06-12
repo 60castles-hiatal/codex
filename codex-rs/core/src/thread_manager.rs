@@ -21,7 +21,6 @@ use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
 use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
-use codex_extension_api::ExtensionDataInit;
 use codex_extension_api::ExtensionRegistry;
 use codex_extension_api::empty_extension_registry;
 use codex_features::Feature;
@@ -183,7 +182,6 @@ pub struct StartThreadOptions {
     pub metrics_service_name: Option<String>,
     pub parent_trace: Option<W3cTraceContext>,
     pub environments: Vec<TurnEnvironmentSelection>,
-    pub thread_extension_init: ExtensionDataInit,
 }
 
 pub(crate) struct ResumeThreadWithHistoryOptions {
@@ -272,10 +270,7 @@ impl ThreadManager {
             codex_home.to_path_buf(),
             restriction_product,
         ));
-        let mcp_manager = Arc::new(McpManager::new_with_extensions(
-            Arc::clone(&plugins_manager),
-            Arc::clone(&extensions),
-        ));
+        let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
         let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
             codex_home,
             config.bundled_skills_enabled(),
@@ -581,7 +576,6 @@ impl ThreadManager {
             metrics_service_name: None,
             parent_trace: None,
             environments,
-            thread_extension_init: ExtensionDataInit::default(),
         }))
         .await
     }
@@ -620,7 +614,6 @@ impl ThreadManager {
             /*inherited_exec_policy*/ None,
             options.parent_trace,
             options.environments,
-            options.thread_extension_init,
             /*user_shell_override*/ None,
         ))
         .await
@@ -709,7 +702,6 @@ impl ThreadManager {
             /*inherited_exec_policy*/ None,
             parent_trace,
             environments,
-            /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
         ))
         .await
@@ -736,7 +728,6 @@ impl ThreadManager {
             /*metrics_service_name*/ None,
             /*parent_trace*/ None,
             environments,
-            /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ Some(user_shell_override),
         ))
         .await
@@ -772,7 +763,6 @@ impl ThreadManager {
             /*inherited_exec_policy*/ None,
             /*parent_trace*/ None,
             environments,
-            /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ Some(user_shell_override),
         ))
         .await
@@ -941,7 +931,6 @@ impl ThreadManager {
             /*metrics_service_name*/ None,
             parent_trace,
             environments,
-            /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
         ))
         .await
@@ -1147,7 +1136,6 @@ impl ThreadManagerState {
             inherited_exec_policy,
             /*parent_trace*/ None,
             environments,
-            /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
         ))
         .await
@@ -1184,7 +1172,6 @@ impl ThreadManagerState {
             inherited_exec_policy,
             /*parent_trace*/ None,
             environments,
-            /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
         ))
         .await
@@ -1222,7 +1209,6 @@ impl ThreadManagerState {
             inherited_exec_policy,
             /*parent_trace*/ None,
             environments,
-            /*thread_extension_init*/ ExtensionDataInit::default(),
             /*user_shell_override*/ None,
         ))
         .await
@@ -1243,7 +1229,6 @@ impl ThreadManagerState {
         metrics_service_name: Option<String>,
         parent_trace: Option<W3cTraceContext>,
         environments: Vec<TurnEnvironmentSelection>,
-        thread_extension_init: ExtensionDataInit,
         user_shell_override: Option<crate::shell::Shell>,
     ) -> CodexResult<NewThread> {
         Box::pin(self.spawn_thread_with_source(
@@ -1261,7 +1246,6 @@ impl ThreadManagerState {
             /*inherited_exec_policy*/ None,
             parent_trace,
             environments,
-            thread_extension_init,
             user_shell_override,
         ))
         .await
@@ -1284,7 +1268,6 @@ impl ThreadManagerState {
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
         parent_trace: Option<W3cTraceContext>,
         environments: Vec<TurnEnvironmentSelection>,
-        thread_extension_init: ExtensionDataInit,
         user_shell_override: Option<crate::shell::Shell>,
     ) -> CodexResult<NewThread> {
         let is_resumed_thread = matches!(&initial_history, InitialHistory::Resumed(_));
@@ -1349,7 +1332,6 @@ impl ThreadManagerState {
             user_shell_override,
             parent_trace,
             environment_selections,
-            thread_extension_init,
             analytics_events_client: self.analytics_events_client.clone(),
             thread_store: Arc::clone(&self.thread_store),
             attestation_provider: self.attestation_provider.clone(),

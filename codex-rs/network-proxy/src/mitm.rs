@@ -21,12 +21,10 @@ use rama_core::Layer;
 use rama_core::Service;
 use rama_core::bytes::Bytes;
 use rama_core::error::BoxError;
-use rama_core::extensions::ExtensionsMut;
 use rama_core::extensions::ExtensionsRef;
-use rama_core::futures::stream::Stream as FuturesStream;
+use rama_core::futures::stream::Stream;
 use rama_core::rt::Executor;
 use rama_core::service::service_fn;
-use rama_core::stream::Stream;
 use rama_http::Body;
 use rama_http::BodyDataStream;
 use rama_http::HeaderMap;
@@ -137,25 +135,17 @@ impl MitmState {
 
 /// Terminate the upgraded CONNECT stream with a generated leaf cert and proxy inner HTTPS traffic.
 pub(crate) async fn mitm_tunnel(upgraded: Upgraded) -> Result<()> {
-    mitm_stream(upgraded).await
-}
-
-/// Terminate a raw client stream with a generated leaf cert and proxy inner HTTPS traffic.
-pub(crate) async fn mitm_stream<S>(stream: S) -> Result<()>
-where
-    S: Stream + Unpin + ExtensionsMut,
-{
-    let mitm = stream
+    let mitm = upgraded
         .extensions()
         .get::<Arc<MitmState>>()
         .cloned()
         .context("missing MITM state")?;
-    let app_state = stream
+    let app_state = upgraded
         .extensions()
         .get::<Arc<NetworkProxyState>>()
         .cloned()
         .context("missing app state")?;
-    let target = stream
+    let target = upgraded
         .extensions()
         .get::<ProxyTarget>()
         .context("missing proxy target")?
@@ -164,7 +154,7 @@ where
     let target_host = normalize_host(&target.host.to_string());
     let target_port = target.port;
     let acceptor_data = mitm.tls_acceptor_data_for_host(&target_host)?;
-    let mode = stream
+    let mode = upgraded
         .extensions()
         .get::<NetworkMode>()
         .copied()
@@ -179,7 +169,7 @@ where
         mitm,
     });
 
-    let executor = stream
+    let executor = upgraded
         .extensions()
         .get::<Executor>()
         .cloned()
@@ -204,7 +194,7 @@ where
         .into_layer(http_service);
 
     https_service
-        .serve(stream)
+        .serve(upgraded)
         .await
         .map_err(|err| anyhow!("MITM serve error: {err}"))?;
     Ok(())
@@ -466,7 +456,7 @@ struct InspectStream<T> {
     max_body_bytes: usize,
 }
 
-impl<T: BodyLoggable> FuturesStream for InspectStream<T> {
+impl<T: BodyLoggable> Stream for InspectStream<T> {
     type Item = Result<Bytes, BoxError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
