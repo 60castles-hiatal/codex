@@ -123,9 +123,17 @@ jobs:
             goal_spec="codex-rs/ext/goal/src/spec.rs"
             goal_continuation="codex-rs/ext/goal/templates/goals/continuation.md"
             app_server_lib="codex-rs/app-server/src/lib.rs"
+            tui_lib="codex-rs/tui/src/lib.rs"
             if ! grep -q '^#!\[recursion_limit = "' "${app_server_lib}"; then
               perl -0pi -e 's/\A/#![recursion_limit = "256"]\n/' "${app_server_lib}"
             fi
+            for log_db_target in "${app_server_lib}" "${tui_lib}"; do
+              perl -0pi -e 's/let log_db = state_db\.clone\(\)\.map\(log_db::start\);/let log_db: Option<log_db::LogDbLayer> = None;/' "${log_db_target}"
+              if ! grep -Fq 'let log_db: Option<log_db::LogDbLayer> = None;' "${log_db_target}"; then
+                echo "Failed to disable SQLite feedback log sink in ${log_db_target}." >&2
+                exit 1
+              fi
+            done
             perl -0pi -e 's/vec!\[json!\("complete"\), json!\("blocked"\)\]/vec![json!("complete")]/' "${goal_spec}"
             perl -0pi -e 's/Required\. Set to \x60complete\x60 only when the objective is achieved and no required work remains\. Set to \x60blocked\x60.*?fresh blocked audit\./Required. Set to \x60complete\x60 only when the objective is achieved and no required work remains./s' "${goal_spec}"
             perl -0pi -e 's/Use this tool only to mark the goal achieved or genuinely blocked\./Use this tool only to mark the goal achieved./' "${goal_spec}"
@@ -222,9 +230,17 @@ jobs:
           goal_spec="codex-rs/ext/goal/src/spec.rs"
           goal_continuation="codex-rs/ext/goal/templates/goals/continuation.md"
           app_server_lib="codex-rs/app-server/src/lib.rs"
+          tui_lib="codex-rs/tui/src/lib.rs"
           if ! grep -q '^#!\[recursion_limit = "' "${app_server_lib}"; then
             perl -0pi -e 's/\A/#![recursion_limit = "256"]\n/' "${app_server_lib}"
           fi
+          for log_db_target in "${app_server_lib}" "${tui_lib}"; do
+            perl -0pi -e 's/let log_db = state_db\.clone\(\)\.map\(log_db::start\);/let log_db: Option<log_db::LogDbLayer> = None;/' "${log_db_target}"
+            if ! grep -Fq 'let log_db: Option<log_db::LogDbLayer> = None;' "${log_db_target}"; then
+              echo "Failed to disable SQLite feedback log sink in ${log_db_target}." >&2
+              exit 1
+            fi
+          done
           perl -0pi -e 's/vec!\[json!\("complete"\), json!\("blocked"\)\]/vec![json!("complete")]/' "${goal_spec}"
           perl -0pi -e 's/Required\. Set to \x60complete\x60 only when the objective is achieved and no required work remains\. Set to \x60blocked\x60.*?fresh blocked audit\./Required. Set to \x60complete\x60 only when the objective is achieved and no required work remains./s' "${goal_spec}"
           perl -0pi -e 's/Use this tool only to mark the goal achieved or genuinely blocked\./Use this tool only to mark the goal achieved./' "${goal_spec}"
