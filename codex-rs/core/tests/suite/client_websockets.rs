@@ -1855,13 +1855,116 @@ async fn responses_websocket_auth_rotation_preconnects_and_promotes_standby() {
     assert_eq!(connections[1].len(), 1);
     let promoted_request = &connections[1][0];
     assert_eq!(promoted_request["type"].as_str(), Some("response.create"));
-    assert_eq!(
-        promoted_request["previous_response_id"].as_str(),
-        Some("resp-2")
-    );
+    assert_eq!(promoted_request.get("previous_response_id"), None);
     assert_eq!(
         promoted_request["input"],
-        serde_json::to_value(&prompt_three.input[4..]).expect("serialize incremental input")
+        serde_json::to_value(&prompt_three.input).expect("serialize full input")
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn responses_websocket_auth_rotation_sends_compacted_history_after_account_swap() {
+    skip_if_no_network!();
+
+    let rotation_homes = TempDir::new().expect("create rotation homes");
+    let account_a = create_rotation_auth_home(rotation_homes.path(), "account-a", "sk-a");
+    let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
+    let epoch_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
+    let rotation_config = json!({
+        "account_homes": [
+            account_a.to_string_lossy(),
+            account_b.to_string_lossy(),
+        ],
+        "slot_seconds": 3,
+        "preconnect_lead_seconds": 1,
+        "stop_new_after_connected_seconds": 4,
+        "hard_cap_seconds": 5,
+        "epoch_seconds": epoch_seconds,
+    })
+    .to_string();
+    let _env_guard = EnvVarGuard::set(CODEX_AUTH_ROTATION_JSON_ENV, OsStr::new(&rotation_config));
+
+    let server = ConcurrentWebSocketTestServer::start(vec![
+        WebSocketConnectionConfig {
+            response_headers: Vec::new(),
+            close_after_requests: false,
+            accept_delay: None,
+            requests: vec![
+                vec![
+                    ev_response_created("resp-1"),
+                    ev_assistant_message("msg-1", "assistant output one"),
+                    ev_completed("resp-1"),
+                ],
+                vec![ev_response_created("resp-2"), ev_completed("resp-2")],
+            ],
+        },
+        WebSocketConnectionConfig {
+            response_headers: Vec::new(),
+            close_after_requests: true,
+            accept_delay: None,
+            requests: vec![vec![ev_response_created("resp-3"), ev_completed("resp-3")]],
+        },
+    ])
+    .await;
+
+    let harness = websocket_harness_with_provider_options(
+        websocket_provider_from_uri(server.uri(), /*websocket_connect_timeout_ms*/ None),
+        /*runtime_metrics_enabled*/ true,
+    )
+    .await;
+    let mut session = harness.client.new_session();
+    let prompt_one = prompt_with_input(vec![message_item("hello before compact")]);
+    let prompt_two = prompt_with_input(vec![
+        message_item("hello before compact"),
+        assistant_message_item("msg-1", "assistant output one"),
+        message_item("warm standby before compact"),
+    ]);
+    let compacted_input = vec![
+        ResponseItem::Compaction {
+            encrypted_content: "encrypted compact summary".to_string(),
+        },
+        message_item("continue after compact"),
+    ];
+    let compacted_prompt = prompt_with_input(compacted_input.clone());
+
+    stream_until_complete(&mut session, &harness, &prompt_one).await;
+    tokio::time::sleep(Duration::from_millis(2_100)).await;
+    stream_until_complete(&mut session, &harness, &prompt_two).await;
+
+    assert!(
+        server.wait_for_handshakes(2, Duration::from_secs(1)).await,
+        "standby account should preconnect before compacted follow-up"
+    );
+
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    stream_until_complete(&mut session, &harness, &compacted_prompt).await;
+
+    let handshakes = server.handshakes();
+    assert_eq!(
+        handshakes[0].header("authorization").as_deref(),
+        Some("Bearer sk-a")
+    );
+    assert_eq!(
+        handshakes[1].header("authorization").as_deref(),
+        Some("Bearer sk-b")
+    );
+
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    assert_eq!(connections[0].len(), 2);
+    assert_eq!(connections[1].len(), 1);
+    let promoted_request = &connections[1][0];
+    assert_eq!(promoted_request["type"].as_str(), Some("response.create"));
+    assert_eq!(promoted_request.get("previous_response_id"), None);
+    assert_eq!(
+        promoted_request["input"],
+        serde_json::to_value(&compacted_input).expect("serialize compacted input")
     );
 
     server.shutdown().await;

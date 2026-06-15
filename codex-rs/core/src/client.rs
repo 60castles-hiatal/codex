@@ -13,7 +13,8 @@
 //! per-turn state such as the `x-codex-turn-state` token used for sticky routing.
 //!
 //! WebSocket prewarm is a v2-only `response.create` with `generate=false`; it waits for completion
-//! so the next request can reuse the same connection and `previous_response_id`.
+//! so the next request can reuse the same connection and, when auth context has not changed,
+//! `previous_response_id`.
 //!
 //! Turn execution performs prewarm as a best-effort step before the first stream request so the
 //! subsequent request can reuse the same connection.
@@ -273,6 +274,7 @@ struct WebsocketSession {
     standby_connection: Option<WebsocketConnectionSlot>,
     last_request: Option<ResponsesApiRequest>,
     last_response_rx: Option<oneshot::Receiver<LastResponse>>,
+    last_response_account_index: Option<usize>,
     last_response_from_untraced_warmup: bool,
     connection_reused: StdMutex<bool>,
 }
@@ -303,6 +305,12 @@ impl WebsocketSession {
 enum WebsocketStreamOutcome {
     Stream(ResponseStream),
     FallbackToHttp,
+}
+
+struct PreparedWebsocketRequest {
+    request: ResponsesWsRequest,
+    previous_response_id_from_untraced_warmup: bool,
+    previous_response_account_index: Option<usize>,
 }
 
 /// Result of opening a WebRTC Realtime call.
@@ -1078,6 +1086,7 @@ impl ModelClientSession {
         self.websocket_session.standby_connection = None;
         self.websocket_session.last_request = None;
         self.websocket_session.last_response_rx = None;
+        self.websocket_session.last_response_account_index = None;
         self.websocket_session.last_response_from_untraced_warmup = false;
         self.websocket_session
             .set_connection_reused(/*connection_reused*/ false);
@@ -1158,12 +1167,13 @@ impl ModelClientSession {
         }
     }
 
-    fn get_last_response(&mut self) -> Option<LastResponse> {
+    fn get_last_response(&mut self) -> Option<(LastResponse, Option<usize>)> {
+        let account_index = self.websocket_session.last_response_account_index.take();
         self.websocket_session
             .last_response_rx
             .take()
             .and_then(|mut receiver| match receiver.try_recv() {
-                Ok(last_response) => Some(last_response),
+                Ok(last_response) => Some((last_response, account_index)),
                 Err(TryRecvError::Closed) | Err(TryRecvError::Empty) => None,
             })
     }
@@ -1172,9 +1182,13 @@ impl ModelClientSession {
         &mut self,
         payload: ResponseCreateWsRequest,
         request: &ResponsesApiRequest,
-    ) -> (ResponsesWsRequest, bool) {
-        let Some(last_response) = self.get_last_response() else {
-            return (ResponsesWsRequest::ResponseCreate(payload), false);
+    ) -> PreparedWebsocketRequest {
+        let Some((last_response, last_response_account_index)) = self.get_last_response() else {
+            return PreparedWebsocketRequest {
+                request: ResponsesWsRequest::ResponseCreate(payload),
+                previous_response_id_from_untraced_warmup: false,
+                previous_response_account_index: None,
+            };
         };
         let previous_response_id_from_untraced_warmup =
             self.websocket_session.last_response_from_untraced_warmup;
@@ -1183,22 +1197,31 @@ impl ModelClientSession {
             Some(&last_response),
             /*allow_empty_delta*/ true,
         ) else {
-            return (ResponsesWsRequest::ResponseCreate(payload), false);
+            return PreparedWebsocketRequest {
+                request: ResponsesWsRequest::ResponseCreate(payload),
+                previous_response_id_from_untraced_warmup: false,
+                previous_response_account_index: None,
+            };
         };
 
         if last_response.response_id.is_empty() {
             trace!("incremental request failed, no previous response id");
-            return (ResponsesWsRequest::ResponseCreate(payload), false);
+            return PreparedWebsocketRequest {
+                request: ResponsesWsRequest::ResponseCreate(payload),
+                previous_response_id_from_untraced_warmup: false,
+                previous_response_account_index: None,
+            };
         }
 
-        (
-            ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest {
+        PreparedWebsocketRequest {
+            request: ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest {
                 previous_response_id: Some(last_response.response_id),
                 input: incremental_items,
                 ..payload
             }),
             previous_response_id_from_untraced_warmup,
-        )
+            previous_response_account_index: last_response_account_index,
+        }
     }
 
     /// Opportunistically preconnects a websocket for this turn-scoped client session.
@@ -1293,6 +1316,7 @@ impl ModelClientSession {
         if needs_new {
             self.websocket_session.last_request = None;
             self.websocket_session.last_response_rx = None;
+            self.websocket_session.last_response_account_index = None;
             self.websocket_session.last_response_from_untraced_warmup = false;
             let turn_state = options
                 .turn_state
@@ -1356,6 +1380,7 @@ impl ModelClientSession {
             self.websocket_session.connection = None;
             self.websocket_session.last_request = None;
             self.websocket_session.last_response_rx = None;
+            self.websocket_session.last_response_account_index = None;
             self.websocket_session.last_response_from_untraced_warmup = false;
             let start_index = params
                 .rotation_account_index
@@ -1786,6 +1811,7 @@ impl ModelClientSession {
             if warmup {
                 ws_payload.generate = Some(false);
             }
+            let full_ws_request = ResponsesWsRequest::ResponseCreate(ws_payload.clone());
 
             let use_auth_rotation = self.client.auth_rotation()?.is_some();
             if !use_auth_rotation {
@@ -1827,8 +1853,10 @@ impl ModelClientSession {
                 }
             }
 
-            let (mut ws_request, previous_response_id_from_untraced_warmup) =
-                self.prepare_websocket_request(ws_payload, &request);
+            let prepared_request = self.prepare_websocket_request(ws_payload, &request);
+            let mut ws_request = prepared_request.request;
+            let mut previous_response_id_from_untraced_warmup =
+                prepared_request.previous_response_id_from_untraced_warmup;
             if use_auth_rotation {
                 match self
                     .websocket_connection(WebsocketConnectParams {
@@ -1853,6 +1881,24 @@ impl ModelClientSession {
                     }
                     Err(err) => return Err(map_api_error(err)),
                 }
+                if let Some(previous_account_index) =
+                    prepared_request.previous_response_account_index
+                {
+                    let selected_account_index = self
+                        .websocket_session
+                        .connection
+                        .as_ref()
+                        .and_then(|slot| slot.account_index);
+                    if selected_account_index != Some(previous_account_index) {
+                        trace!(
+                            previous_account_index = previous_account_index,
+                            selected_account_index = ?selected_account_index,
+                            "Codex auth rotation sending full websocket request after account swap"
+                        );
+                        ws_request = full_ws_request;
+                        previous_response_id_from_untraced_warmup = false;
+                    }
+                }
             }
             let inference_trace_attempt = if warmup {
                 // Prewarm sends `generate=false`; it is connection setup, not a
@@ -1870,7 +1916,7 @@ impl ModelClientSession {
             } else {
                 inference_trace_attempt.record_started(&ws_request);
             }
-            self.websocket_session.last_request = Some(request);
+            self.websocket_session.last_request = Some(request.clone());
             self.websocket_session.last_response_from_untraced_warmup = warmup;
             let websocket_connection =
                 self.websocket_session.connection.as_ref().ok_or_else(|| {
@@ -1898,6 +1944,11 @@ impl ModelClientSession {
                 session_telemetry.clone(),
                 inference_trace_attempt,
             );
+            self.websocket_session.last_response_account_index = self
+                .websocket_session
+                .connection
+                .as_ref()
+                .and_then(|slot| slot.account_index);
             self.websocket_session.last_response_rx = Some(last_request_rx);
             return Ok(WebsocketStreamOutcome::Stream(stream));
         }
