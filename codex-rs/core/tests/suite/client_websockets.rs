@@ -47,13 +47,34 @@ use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use core_test_support::tracing::install_test_tracing;
 use core_test_support::wait_for_event;
+use futures::SinkExt;
 use futures::StreamExt;
+use http::HeaderName;
+use http::HeaderValue;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use pretty_assertions::assert_eq;
+use serde_json::Value;
 use serde_json::json;
+use serial_test::serial;
+use std::collections::VecDeque;
+use std::ffi::OsStr;
+use std::ffi::OsString;
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
+use tokio::sync::watch;
+use tokio_tungstenite::accept_hdr_async_with_config;
+use tokio_tungstenite::tungstenite::extensions::ExtensionsConfig;
+use tokio_tungstenite::tungstenite::extensions::compression::deflate::DeflateConfig;
+use tokio_tungstenite::tungstenite::handshake::server::Request;
+use tokio_tungstenite::tungstenite::handshake::server::Response;
+use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::Instrument;
 use tracing_test::traced_test;
 
@@ -62,6 +83,8 @@ const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 const USER_AGENT_HEADER: &str = "user-agent";
 const WS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const X_CLIENT_REQUEST_ID_HEADER: &str = "x-client-request-id";
+const CODEX_AUTH_ROTATION_JSON_ENV: &str = "CODEX_AUTH_ROTATION_JSON";
+const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 const WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY: &str =
     "ws_request_header_x_openai_internal_codex_responses_lite";
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -1723,6 +1746,128 @@ async fn responses_websocket_v2_creates_with_previous_response_id_on_prefix() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn responses_websocket_auth_rotation_preconnects_and_promotes_standby() {
+    skip_if_no_network!();
+
+    let rotation_homes = TempDir::new().expect("create rotation homes");
+    let account_a = create_rotation_auth_home(rotation_homes.path(), "account-a", "sk-a");
+    let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
+    let epoch_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock should be after unix epoch")
+        .as_secs();
+    let rotation_config = json!({
+        "account_homes": [
+            account_a.to_string_lossy(),
+            account_b.to_string_lossy(),
+        ],
+        "slot_seconds": 3,
+        "preconnect_lead_seconds": 1,
+        "stop_new_after_connected_seconds": 4,
+        "hard_cap_seconds": 5,
+        "epoch_seconds": epoch_seconds,
+    })
+    .to_string();
+    let _env_guard = EnvVarGuard::set(CODEX_AUTH_ROTATION_JSON_ENV, OsStr::new(&rotation_config));
+
+    let server = ConcurrentWebSocketTestServer::start(vec![
+        WebSocketConnectionConfig {
+            response_headers: vec![(X_CODEX_TURN_STATE_HEADER.to_string(), "state-a".to_string())],
+            close_after_requests: false,
+            accept_delay: None,
+            requests: vec![
+                vec![
+                    ev_response_created("resp-1"),
+                    ev_assistant_message("msg-1", "assistant output one"),
+                    ev_completed("resp-1"),
+                ],
+                vec![
+                    ev_response_created("resp-2"),
+                    ev_assistant_message("msg-2", "assistant output two"),
+                    ev_completed("resp-2"),
+                ],
+                vec![ev_completed("unused")],
+            ],
+        },
+        WebSocketConnectionConfig {
+            response_headers: Vec::new(),
+            close_after_requests: true,
+            accept_delay: None,
+            requests: vec![vec![ev_response_created("resp-3"), ev_completed("resp-3")]],
+        },
+    ])
+    .await;
+
+    let harness = websocket_harness_with_provider_options(
+        websocket_provider_from_uri(server.uri(), /*websocket_connect_timeout_ms*/ None),
+        /*runtime_metrics_enabled*/ true,
+    )
+    .await;
+    let mut session = harness.client.new_session();
+    let prompt_one = prompt_with_input(vec![message_item("hello")]);
+    let prompt_two = prompt_with_input(vec![
+        message_item("hello"),
+        assistant_message_item("msg-1", "assistant output one"),
+        message_item("second"),
+    ]);
+    let prompt_three = prompt_with_input(vec![
+        message_item("hello"),
+        assistant_message_item("msg-1", "assistant output one"),
+        message_item("second"),
+        assistant_message_item("msg-2", "assistant output two"),
+        message_item("third"),
+    ]);
+
+    stream_until_complete(&mut session, &harness, &prompt_one).await;
+    tokio::time::sleep(Duration::from_millis(2_100)).await;
+
+    stream_until_complete(&mut session, &harness, &prompt_two).await;
+
+    assert!(
+        server.wait_for_handshakes(2, Duration::from_secs(1)).await,
+        "standby account should preconnect before slot end"
+    );
+    let handshakes = server.handshakes();
+    assert_eq!(
+        handshakes[0].header("authorization").as_deref(),
+        Some("Bearer sk-a")
+    );
+    assert_eq!(
+        handshakes[1].header("authorization").as_deref(),
+        Some("Bearer sk-b")
+    );
+    assert_eq!(handshakes[1].header(X_CODEX_TURN_STATE_HEADER), None);
+
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    assert_eq!(connections[0].len(), 2);
+    assert_eq!(
+        connections[1].len(),
+        0,
+        "standby connection must not receive a request before promotion"
+    );
+
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    stream_until_complete(&mut session, &harness, &prompt_three).await;
+
+    let connections = server.connections();
+    assert_eq!(connections[1].len(), 1);
+    let promoted_request = &connections[1][0];
+    assert_eq!(promoted_request["type"].as_str(), Some("response.create"));
+    assert_eq!(
+        promoted_request["previous_response_id"].as_str(),
+        Some("resp-2")
+    );
+    assert_eq!(
+        promoted_request["input"],
+        serde_json::to_value(&prompt_three.input[4..]).expect("serialize incremental input")
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn responses_websocket_v2_creates_without_previous_response_id_when_non_input_fields_change()
 {
     skip_if_no_network!();
@@ -1979,9 +2124,16 @@ fn websocket_provider_with_connect_timeout(
     server: &WebSocketTestServer,
     websocket_connect_timeout_ms: Option<u64>,
 ) -> ModelProviderInfo {
+    websocket_provider_from_uri(server.uri(), websocket_connect_timeout_ms)
+}
+
+fn websocket_provider_from_uri(
+    uri: &str,
+    websocket_connect_timeout_ms: Option<u64>,
+) -> ModelProviderInfo {
     ModelProviderInfo {
         name: "mock-ws".into(),
-        base_url: Some(format!("{}/v1", server.uri())),
+        base_url: Some(format!("{uri}/v1")),
         env_key: None,
         env_key_instructions: None,
         experimental_bearer_token: None,
@@ -2198,6 +2350,268 @@ async fn stream_until_complete_with_request_metadata(
     while let Some(event) = stream.next().await {
         if matches!(event, Ok(ResponseEvent::Completed { .. })) {
             break;
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ConcurrentWebSocketHandshake {
+    headers: Vec<(String, String)>,
+}
+
+impl ConcurrentWebSocketHandshake {
+    fn header(&self, name: &str) -> Option<String> {
+        self.headers
+            .iter()
+            .find(|(header, _)| header.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    }
+}
+
+struct ConcurrentWebSocketTestServer {
+    uri: String,
+    connections: Arc<Mutex<Vec<Vec<Value>>>>,
+    handshakes: Arc<Mutex<Vec<ConcurrentWebSocketHandshake>>>,
+    shutdown: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl ConcurrentWebSocketTestServer {
+    async fn start(connections: Vec<WebSocketConnectionConfig>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind concurrent websocket server");
+        let addr = listener
+            .local_addr()
+            .expect("concurrent websocket server address");
+        let uri = format!("ws://{addr}");
+        let connections_log = Arc::new(Mutex::new(Vec::new()));
+        let handshakes_log = Arc::new(Mutex::new(Vec::new()));
+        let pending_connections = Arc::new(Mutex::new(VecDeque::from(connections)));
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+
+        let task = {
+            let pending_connections = Arc::clone(&pending_connections);
+            let connections_log = Arc::clone(&connections_log);
+            let handshakes_log = Arc::clone(&handshakes_log);
+            tokio::spawn(async move {
+                loop {
+                    let accept_result = tokio::select! {
+                        _ = shutdown_rx.changed() => return,
+                        accept_result = listener.accept() => accept_result,
+                    };
+                    let (stream, _) = match accept_result {
+                        Ok(value) => value,
+                        Err(_) => return,
+                    };
+                    let connection = {
+                        let mut pending = pending_connections.lock().unwrap();
+                        pending.pop_front()
+                    };
+                    let Some(connection) = connection else {
+                        continue;
+                    };
+
+                    let mut handler_shutdown_rx = shutdown_rx.clone();
+                    let connections_log = Arc::clone(&connections_log);
+                    let handshakes_log = Arc::clone(&handshakes_log);
+                    tokio::spawn(async move {
+                        if let Some(delay) = connection.accept_delay {
+                            tokio::select! {
+                                _ = handler_shutdown_rx.changed() => return,
+                                _ = tokio::time::sleep(delay) => {}
+                            }
+                        }
+
+                        let response_headers = connection.response_headers.clone();
+                        let handshake_log = Arc::clone(&handshakes_log);
+                        let callback = move |req: &Request, mut response: Response| {
+                            let headers =
+                                req.headers()
+                                    .iter()
+                                    .filter_map(|(name, value)| {
+                                        value.to_str().ok().map(|value| {
+                                            (name.as_str().to_string(), value.to_string())
+                                        })
+                                    })
+                                    .collect();
+                            handshake_log
+                                .lock()
+                                .unwrap()
+                                .push(ConcurrentWebSocketHandshake { headers });
+
+                            let headers_mut = response.headers_mut();
+                            for (name, value) in &response_headers {
+                                if let (Ok(name), Ok(value)) = (
+                                    HeaderName::from_bytes(name.as_bytes()),
+                                    HeaderValue::from_str(value),
+                                ) {
+                                    headers_mut.insert(name, value);
+                                }
+                            }
+
+                            Ok(response)
+                        };
+
+                        let mut ws_stream = match accept_hdr_async_with_config(
+                            stream,
+                            callback,
+                            Some(test_websocket_accept_config()),
+                        )
+                        .await
+                        {
+                            Ok(ws_stream) => ws_stream,
+                            Err(_) => return,
+                        };
+                        let connection_index = {
+                            let mut log = connections_log.lock().unwrap();
+                            log.push(Vec::new());
+                            log.len() - 1
+                        };
+
+                        for request_events in connection.requests {
+                            let message = tokio::select! {
+                                _ = handler_shutdown_rx.changed() => return,
+                                message = ws_stream.next() => message,
+                            };
+                            let Some(Ok(message)) = message else {
+                                break;
+                            };
+                            if let Some(body) = parse_test_ws_request_body(message) {
+                                let mut log = connections_log.lock().unwrap();
+                                if let Some(connection_log) = log.get_mut(connection_index) {
+                                    connection_log.push(body);
+                                }
+                            }
+
+                            for event in &request_events {
+                                let Ok(payload) = serde_json::to_string(event) else {
+                                    continue;
+                                };
+                                if ws_stream.send(Message::Text(payload.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if connection.close_after_requests {
+                            let _ = ws_stream.close(None).await;
+                        } else {
+                            let _ = handler_shutdown_rx.changed().await;
+                        }
+                    });
+                }
+            })
+        };
+
+        Self {
+            uri,
+            connections: connections_log,
+            handshakes: handshakes_log,
+            shutdown: shutdown_tx,
+            task,
+        }
+    }
+
+    fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    fn connections(&self) -> Vec<Vec<Value>> {
+        self.connections.lock().unwrap().clone()
+    }
+
+    fn handshakes(&self) -> Vec<ConcurrentWebSocketHandshake> {
+        self.handshakes.lock().unwrap().clone()
+    }
+
+    async fn wait_for_handshakes(&self, expected: usize, timeout: Duration) -> bool {
+        if self.handshakes.lock().unwrap().len() >= expected {
+            return true;
+        }
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        let poll_interval = Duration::from_millis(10);
+        loop {
+            if self.handshakes.lock().unwrap().len() >= expected {
+                return true;
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            let sleep_for = std::cmp::min(poll_interval, deadline.saturating_duration_since(now));
+            tokio::time::sleep(sleep_for).await;
+        }
+    }
+
+    async fn shutdown(self) {
+        let _ = self.shutdown.send(true);
+        let mut task = self.task;
+        if tokio::time::timeout(Duration::from_secs(10), &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+        }
+    }
+}
+
+fn test_websocket_accept_config() -> WebSocketConfig {
+    let mut extensions = ExtensionsConfig::default();
+    extensions.permessage_deflate = Some(DeflateConfig::default());
+
+    let mut config = WebSocketConfig::default();
+    config.extensions = extensions;
+    config
+}
+
+fn parse_test_ws_request_body(message: Message) -> Option<Value> {
+    match message {
+        Message::Text(text) => serde_json::from_str(&text).ok(),
+        Message::Binary(bytes) => serde_json::from_slice(&bytes).ok(),
+        _ => None,
+    }
+}
+
+fn create_rotation_auth_home(root: &Path, name: &str, api_key: &str) -> std::path::PathBuf {
+    let home = root.join(name);
+    std::fs::create_dir_all(&home).expect("create rotation account home");
+    std::fs::write(
+        home.join("auth.json"),
+        json!({
+            "OPENAI_API_KEY": api_key,
+            "tokens": null,
+            "last_refresh": null,
+        })
+        .to_string(),
+    )
+    .expect("write rotation auth.json");
+    home
+}
+
+struct EnvVarGuard {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &OsStr) -> Self {
+        let original = std::env::var_os(key);
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
         }
     }
 }
