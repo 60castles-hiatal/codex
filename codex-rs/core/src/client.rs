@@ -203,6 +203,7 @@ struct CurrentClientSetup {
     api_auth: SharedAuthProvider,
     auth_manager: Option<Arc<AuthManager>>,
     rotation_account_index: Option<usize>,
+    rotation_generation: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
@@ -271,10 +272,10 @@ struct LastResponse {
 #[derive(Debug, Default)]
 struct WebsocketSession {
     connection: Option<WebsocketConnectionSlot>,
-    standby_connection: Option<WebsocketConnectionSlot>,
     last_request: Option<ResponsesApiRequest>,
     last_response_rx: Option<oneshot::Receiver<LastResponse>>,
     last_response_account_index: Option<usize>,
+    last_response_rotation_generation: Option<u64>,
     last_response_from_untraced_warmup: bool,
     connection_reused: StdMutex<bool>,
 }
@@ -283,7 +284,7 @@ struct WebsocketSession {
 struct WebsocketConnectionSlot {
     connection: ApiWebSocketConnection,
     account_index: Option<usize>,
-    connected_at: Instant,
+    generation: Option<u64>,
 }
 
 impl WebsocketSession {
@@ -311,6 +312,7 @@ struct PreparedWebsocketRequest {
     request: ResponsesWsRequest,
     previous_response_id_from_untraced_warmup: bool,
     previous_response_account_index: Option<usize>,
+    previous_response_generation: Option<u64>,
 }
 
 /// Result of opening a WebRTC Realtime call.
@@ -879,6 +881,7 @@ impl ModelClient {
             api_auth,
             auth_manager: self.state.provider.auth_manager(),
             rotation_account_index: None,
+            rotation_generation: None,
         })
     }
 
@@ -886,26 +889,24 @@ impl ModelClient {
         let Some(rotation) = self.auth_rotation()? else {
             return self.current_client_setup().await;
         };
-        let account_index = rotation.next_initial_account().ok_or_else(|| {
-            CodexErr::InvalidRequest("no usable Codex auth rotation accounts are available".into())
-        })?;
-        self.auth_rotation_client_setup(&rotation, account_index)
-            .await
+        let state = rotation.active_state().await?;
+        self.auth_rotation_client_setup(&rotation, &state).await
     }
 
     async fn auth_rotation_client_setup(
         &self,
         rotation: &AuthRotation,
-        account_index: usize,
+        state: &crate::auth_rotation::AuthRotationState,
     ) -> Result<CurrentClientSetup> {
         let AuthRotationClientSetup {
             account_index,
+            generation,
             auth,
             api_provider,
             api_auth,
             auth_manager,
         } = rotation
-            .client_setup_for_account(account_index, self.state.provider.info())
+            .client_setup_for_state(state, self.state.provider.info())
             .await?;
         Ok(CurrentClientSetup {
             auth: Some(auth),
@@ -913,6 +914,37 @@ impl ModelClient {
             api_auth,
             auth_manager: Some(auth_manager),
             rotation_account_index: Some(account_index),
+            rotation_generation: Some(generation),
+        })
+    }
+
+    async fn auth_rotation_account_generation_setup(
+        &self,
+        rotation: &AuthRotation,
+        account_index: usize,
+        generation: u64,
+    ) -> Result<CurrentClientSetup> {
+        let AuthRotationClientSetup {
+            account_index,
+            generation,
+            auth,
+            api_provider,
+            api_auth,
+            auth_manager,
+        } = rotation
+            .client_setup_for_account_generation(
+                account_index,
+                generation,
+                self.state.provider.info(),
+            )
+            .await?;
+        Ok(CurrentClientSetup {
+            auth: Some(auth),
+            api_provider,
+            api_auth,
+            auth_manager: Some(auth_manager),
+            rotation_account_index: Some(account_index),
+            rotation_generation: Some(generation),
         })
     }
 
@@ -1061,6 +1093,36 @@ impl Drop for ModelClientSession {
 }
 
 impl ModelClientSession {
+    pub(crate) fn auth_rotation_account_count(&self) -> Option<usize> {
+        self.client
+            .auth_rotation()
+            .ok()
+            .flatten()
+            .map(|rotation| rotation.account_count())
+    }
+
+    pub(crate) async fn advance_auth_rotation_after_usage_limit(
+        &mut self,
+    ) -> Result<Option<CodexErr>> {
+        let Some(rotation) = self.client.auth_rotation()? else {
+            return Ok(None);
+        };
+        let Some(slot) = self.websocket_session.connection.as_ref() else {
+            return Ok(None);
+        };
+        let (Some(account_index), Some(generation)) = (slot.account_index, slot.generation) else {
+            return Ok(None);
+        };
+        let state = rotation
+            .advance_after_usage_limit(account_index, generation)
+            .await?;
+        self.reset_websocket_session();
+        Ok(Some(CodexErr::AuthRotationRetry(format!(
+            "Codex auth rotation advanced from account {account_index} generation {generation} to account {} generation {}",
+            state.active_index, state.generation
+        ))))
+    }
+
     fn turn_state_for_new_connection(&self, account_index: Option<usize>) -> Arc<OnceLock<String>> {
         if account_index.is_some() {
             Arc::new(OnceLock::new())
@@ -1073,20 +1135,21 @@ impl ModelClientSession {
         &self,
         connection: ApiWebSocketConnection,
         account_index: Option<usize>,
+        generation: Option<u64>,
     ) -> WebsocketConnectionSlot {
         WebsocketConnectionSlot {
             connection,
             account_index,
-            connected_at: Instant::now(),
+            generation,
         }
     }
 
     fn reset_websocket_session(&mut self) {
         self.websocket_session.connection = None;
-        self.websocket_session.standby_connection = None;
         self.websocket_session.last_request = None;
         self.websocket_session.last_response_rx = None;
         self.websocket_session.last_response_account_index = None;
+        self.websocket_session.last_response_rotation_generation = None;
         self.websocket_session.last_response_from_untraced_warmup = false;
         self.websocket_session
             .set_connection_reused(/*connection_reused*/ false);
@@ -1167,13 +1230,17 @@ impl ModelClientSession {
         }
     }
 
-    fn get_last_response(&mut self) -> Option<(LastResponse, Option<usize>)> {
+    fn get_last_response(&mut self) -> Option<(LastResponse, Option<usize>, Option<u64>)> {
         let account_index = self.websocket_session.last_response_account_index.take();
+        let generation = self
+            .websocket_session
+            .last_response_rotation_generation
+            .take();
         self.websocket_session
             .last_response_rx
             .take()
             .and_then(|mut receiver| match receiver.try_recv() {
-                Ok(last_response) => Some((last_response, account_index)),
+                Ok(last_response) => Some((last_response, account_index, generation)),
                 Err(TryRecvError::Closed) | Err(TryRecvError::Empty) => None,
             })
     }
@@ -1183,11 +1250,14 @@ impl ModelClientSession {
         payload: ResponseCreateWsRequest,
         request: &ResponsesApiRequest,
     ) -> PreparedWebsocketRequest {
-        let Some((last_response, last_response_account_index)) = self.get_last_response() else {
+        let Some((last_response, last_response_account_index, last_response_generation)) =
+            self.get_last_response()
+        else {
             return PreparedWebsocketRequest {
                 request: ResponsesWsRequest::ResponseCreate(payload),
                 previous_response_id_from_untraced_warmup: false,
                 previous_response_account_index: None,
+                previous_response_generation: None,
             };
         };
         let previous_response_id_from_untraced_warmup =
@@ -1201,6 +1271,7 @@ impl ModelClientSession {
                 request: ResponsesWsRequest::ResponseCreate(payload),
                 previous_response_id_from_untraced_warmup: false,
                 previous_response_account_index: None,
+                previous_response_generation: None,
             };
         };
 
@@ -1210,6 +1281,7 @@ impl ModelClientSession {
                 request: ResponsesWsRequest::ResponseCreate(payload),
                 previous_response_id_from_untraced_warmup: false,
                 previous_response_account_index: None,
+                previous_response_generation: None,
             };
         }
 
@@ -1221,6 +1293,7 @@ impl ModelClientSession {
             }),
             previous_response_id_from_untraced_warmup,
             previous_response_account_index: last_response_account_index,
+            previous_response_generation: last_response_generation,
         }
     }
 
@@ -1266,8 +1339,11 @@ impl ModelClientSession {
                 RequestRouteTelemetry::for_endpoint(RESPONSES_ENDPOINT),
             )
             .await?;
-        self.websocket_session.connection =
-            Some(self.connection_slot(connection, client_setup.rotation_account_index));
+        self.websocket_session.connection = Some(self.connection_slot(
+            connection,
+            client_setup.rotation_account_index,
+            client_setup.rotation_generation,
+        ));
         self.websocket_session
             .set_connection_reused(/*connection_reused*/ false);
         Ok(())
@@ -1303,6 +1379,7 @@ impl ModelClientSession {
             api_provider,
             api_auth,
             rotation_account_index: _,
+            rotation_generation: _,
             turn_metadata_header,
             options,
             auth_context,
@@ -1317,6 +1394,7 @@ impl ModelClientSession {
             self.websocket_session.last_request = None;
             self.websocket_session.last_response_rx = None;
             self.websocket_session.last_response_account_index = None;
+            self.websocket_session.last_response_rotation_generation = None;
             self.websocket_session.last_response_from_untraced_warmup = false;
             let turn_state = options
                 .turn_state
@@ -1343,8 +1421,9 @@ impl ModelClientSession {
                     return Err(err);
                 }
             };
-            self.websocket_session.connection =
-                Some(self.connection_slot(new_conn, /*account_index*/ None));
+            self.websocket_session.connection = Some(self.connection_slot(
+                new_conn, /*account_index*/ None, /*generation*/ None,
+            ));
             self.websocket_session
                 .set_connection_reused(/*connection_reused*/ false);
         } else {
@@ -1370,10 +1449,18 @@ impl ModelClientSession {
             .auth_rotation()
             .map_err(|err| ApiError::Stream(err.to_string()))?
             .ok_or_else(|| ApiError::Stream("auth rotation is unavailable".to_string()))?;
-        self.drop_closed_standby().await;
-
+        let target_account_index = params.rotation_account_index.ok_or_else(|| {
+            ApiError::Stream("Codex auth rotation request is missing account index".to_string())
+        })?;
+        let target_generation = params.rotation_generation.ok_or_else(|| {
+            ApiError::Stream("Codex auth rotation request is missing generation".to_string())
+        })?;
         let needs_new = match self.websocket_session.connection.as_ref() {
-            Some(slot) => slot.connection.is_closed().await,
+            Some(slot) => {
+                slot.connection.is_closed().await
+                    || slot.account_index != Some(target_account_index)
+                    || slot.generation != Some(target_generation)
+            }
             None => true,
         };
         if needs_new {
@@ -1381,33 +1468,22 @@ impl ModelClientSession {
             self.websocket_session.last_request = None;
             self.websocket_session.last_response_rx = None;
             self.websocket_session.last_response_account_index = None;
+            self.websocket_session.last_response_rotation_generation = None;
             self.websocket_session.last_response_from_untraced_warmup = false;
-            let start_index = params
-                .rotation_account_index
-                .or_else(|| rotation.next_initial_account())
-                .ok_or_else(|| {
-                    ApiError::Stream("no usable Codex auth rotation accounts are available".into())
-                })?;
             let slot = self
-                .connect_rotated_websocket(&rotation, start_index, &params)
+                .connect_rotated_account(
+                    &rotation,
+                    target_account_index,
+                    target_generation,
+                    &params,
+                )
                 .await?;
             self.websocket_session.connection = Some(slot);
             self.websocket_session
                 .set_connection_reused(/*connection_reused*/ false);
         } else {
-            self.maybe_preconnect_rotated_standby(&rotation, &params)
-                .await;
-            let should_promote = self
-                .websocket_session
-                .connection
-                .as_ref()
-                .is_some_and(|slot| rotation.should_promote(slot.connected_at));
-            if should_promote {
-                self.promote_or_connect_rotated(&rotation, &params).await?;
-            } else {
-                self.websocket_session
-                    .set_connection_reused(/*connection_reused*/ true);
-            }
+            self.websocket_session
+                .set_connection_reused(/*connection_reused*/ true);
         }
 
         self.websocket_session
@@ -1419,122 +1495,17 @@ impl ModelClientSession {
             ))
     }
 
-    async fn drop_closed_standby(&mut self) {
-        let standby_closed = match self.websocket_session.standby_connection.as_ref() {
-            Some(slot) => slot.connection.is_closed().await,
-            None => false,
-        };
-        if standby_closed {
-            self.websocket_session.standby_connection = None;
-        }
-    }
-
-    async fn maybe_preconnect_rotated_standby(
-        &mut self,
-        rotation: &AuthRotation,
-        params: &WebsocketConnectParams<'_>,
-    ) {
-        if self.websocket_session.standby_connection.is_some() {
-            return;
-        }
-        let Some(active) = self.websocket_session.connection.as_ref() else {
-            return;
-        };
-        if !rotation.should_preconnect(active.connected_at) {
-            return;
-        }
-        let Some(active_account_index) = active.account_index else {
-            return;
-        };
-        let Some(next_account_index) = rotation.next_account_after(active_account_index) else {
-            return;
-        };
-        match self
-            .connect_rotated_websocket(rotation, next_account_index, params)
-            .await
-        {
-            Ok(slot) => {
-                self.websocket_session.standby_connection = Some(slot);
-            }
-            Err(err) => {
-                warn!("Codex auth rotation standby preconnect failed: {err}");
-            }
-        }
-    }
-
-    async fn promote_or_connect_rotated(
-        &mut self,
-        rotation: &AuthRotation,
-        params: &WebsocketConnectParams<'_>,
-    ) -> std::result::Result<(), ApiError> {
-        if let Some(standby) = self.websocket_session.standby_connection.take() {
-            if !standby.connection.is_closed().await {
-                self.websocket_session.connection = Some(standby);
-                self.websocket_session
-                    .set_connection_reused(/*connection_reused*/ false);
-                return Ok(());
-            }
-        }
-
-        let start_index = self
-            .websocket_session
-            .connection
-            .as_ref()
-            .and_then(|slot| slot.account_index)
-            .and_then(|account_index| rotation.next_account_after(account_index))
-            .or_else(|| params.rotation_account_index)
-            .or_else(|| rotation.next_initial_account())
-            .ok_or_else(|| {
-                ApiError::Stream("no usable Codex auth rotation accounts are available".into())
-            })?;
-        let slot = self
-            .connect_rotated_websocket(rotation, start_index, params)
-            .await?;
-        self.websocket_session.connection = Some(slot);
-        self.websocket_session
-            .set_connection_reused(/*connection_reused*/ false);
-        Ok(())
-    }
-
-    async fn connect_rotated_websocket(
-        &self,
-        rotation: &AuthRotation,
-        start_account_index: usize,
-        params: &WebsocketConnectParams<'_>,
-    ) -> std::result::Result<WebsocketConnectionSlot, ApiError> {
-        let mut account_index = start_account_index;
-        let mut last_error = None;
-        for _ in 0..rotation.account_count() {
-            match self
-                .connect_rotated_account(rotation, account_index, params)
-                .await
-            {
-                Ok(slot) => return Ok(slot),
-                Err(err) => {
-                    rotation.mark_failure(account_index, &err);
-                    last_error = Some(err);
-                }
-            }
-            account_index = rotation
-                .next_account_after(account_index)
-                .unwrap_or((account_index + 1) % rotation.account_count());
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            ApiError::Stream("no usable Codex auth rotation accounts are available".to_string())
-        }))
-    }
-
     async fn connect_rotated_account(
         &self,
         rotation: &AuthRotation,
         account_index: usize,
+        generation: u64,
         params: &WebsocketConnectParams<'_>,
     ) -> std::result::Result<WebsocketConnectionSlot, ApiError> {
         let mut pending_retry = PendingUnauthorizedRetry::default();
         let mut setup = self
             .client
-            .auth_rotation_client_setup(rotation, account_index)
+            .auth_rotation_account_generation_setup(rotation, account_index, generation)
             .await
             .map_err(|err| ApiError::Stream(err.to_string()))?;
         let mut auth_recovery = Some(
@@ -1569,8 +1540,11 @@ impl ModelClientSession {
 
             match result {
                 Ok(connection) => {
-                    rotation.clear_failure(account_index);
-                    return Ok(self.connection_slot(connection, setup.rotation_account_index));
+                    return Ok(self.connection_slot(
+                        connection,
+                        setup.rotation_account_index,
+                        setup.rotation_generation,
+                    ));
                 }
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
@@ -1590,7 +1564,7 @@ impl ModelClientSession {
                     );
                     setup = self
                         .client
-                        .auth_rotation_client_setup(rotation, account_index)
+                        .auth_rotation_account_generation_setup(rotation, account_index, generation)
                         .await
                         .map_err(|err| ApiError::Stream(err.to_string()))?;
                     auth_recovery = Some(
@@ -1821,6 +1795,7 @@ impl ModelClientSession {
                         api_provider: client_setup.api_provider.clone(),
                         api_auth: client_setup.api_auth.clone(),
                         rotation_account_index: client_setup.rotation_account_index,
+                        rotation_generation: client_setup.rotation_generation,
                         turn_metadata_header,
                         options: &options,
                         auth_context: request_auth_context,
@@ -1864,6 +1839,7 @@ impl ModelClientSession {
                         api_provider: client_setup.api_provider.clone(),
                         api_auth: client_setup.api_auth.clone(),
                         rotation_account_index: client_setup.rotation_account_index,
+                        rotation_generation: client_setup.rotation_generation,
                         turn_metadata_header,
                         options: &options,
                         auth_context: request_auth_context,
@@ -1889,11 +1865,20 @@ impl ModelClientSession {
                         .connection
                         .as_ref()
                         .and_then(|slot| slot.account_index);
-                    if selected_account_index != Some(previous_account_index) {
+                    let selected_generation = self
+                        .websocket_session
+                        .connection
+                        .as_ref()
+                        .and_then(|slot| slot.generation);
+                    if selected_account_index != Some(previous_account_index)
+                        || selected_generation != prepared_request.previous_response_generation
+                    {
                         trace!(
                             previous_account_index = previous_account_index,
                             selected_account_index = ?selected_account_index,
-                            "Codex auth rotation sending full websocket request after account swap"
+                            previous_generation = ?prepared_request.previous_response_generation,
+                            selected_generation = ?selected_generation,
+                            "Codex auth rotation sending full websocket request after account swap or generation change"
                         );
                         ws_request = full_ws_request;
                         previous_response_id_from_untraced_warmup = false;
@@ -1949,6 +1934,11 @@ impl ModelClientSession {
                 .connection
                 .as_ref()
                 .and_then(|slot| slot.account_index);
+            self.websocket_session.last_response_rotation_generation = self
+                .websocket_session
+                .connection
+                .as_ref()
+                .and_then(|slot| slot.generation);
             self.websocket_session.last_response_rx = Some(last_request_rx);
             return Ok(WebsocketStreamOutcome::Stream(stream));
         }
@@ -2448,6 +2438,7 @@ struct WebsocketConnectParams<'a> {
     api_provider: codex_api::Provider,
     api_auth: SharedAuthProvider,
     rotation_account_index: Option<usize>,
+    rotation_generation: Option<u64>,
     turn_metadata_header: Option<&'a str>,
     options: &'a ApiResponsesOptions,
     auth_context: AuthRequestTelemetryContext,

@@ -1,13 +1,7 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 use std::time::Duration;
-use std::time::Instant;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 
-use codex_api::ApiError;
 use codex_api::SharedAuthProvider;
 use codex_login::AuthCredentialsStoreMode;
 use codex_login::AuthManager;
@@ -16,24 +10,21 @@ use codex_model_provider::auth_provider_from_auth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
+use reqwest::StatusCode;
 use serde::Deserialize;
+use serde::Serialize;
 use tokio::sync::OnceCell;
-use tracing::warn;
 
 pub(crate) const CODEX_AUTH_ROTATION_JSON_ENV: &str = "CODEX_AUTH_ROTATION_JSON";
-pub(crate) const DEFAULT_SLOT_SECONDS: u64 = 2250;
-pub(crate) const DEFAULT_PRECONNECT_LEAD_SECONDS: u64 = 120;
-pub(crate) const DEFAULT_STOP_NEW_AFTER_CONNECTED_SECONDS: u64 = 2400;
-pub(crate) const DEFAULT_HARD_CAP_SECONDS: u64 = 2500;
-const DEFAULT_FAILURE_COOLDOWN_SECONDS: u64 = 600;
+const COORDINATOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub(crate) struct AuthRotation {
     accounts: Vec<AuthRotationAccount>,
-    timings: AuthRotationTimings,
-    epoch_seconds: u64,
-    failure_cooldown: Duration,
-    failures: StdMutex<HashMap<usize, Instant>>,
+    rotation_id: String,
+    coordinator_url: String,
+    coordinator_token: String,
+    http_client: reqwest::Client,
     chatgpt_base_url: Option<String>,
 }
 
@@ -43,36 +34,37 @@ struct AuthRotationAccount {
     manager: OnceCell<Arc<AuthManager>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AuthRotationTimings {
-    pub(crate) slot: Duration,
-    pub(crate) preconnect_lead: Duration,
-    pub(crate) stop_new_after_connected: Duration,
-    pub(crate) hard_cap: Duration,
-}
-
 #[derive(Clone)]
 pub(crate) struct AuthRotationClientSetup {
     pub(crate) account_index: usize,
+    pub(crate) generation: u64,
     pub(crate) auth: CodexAuth,
     pub(crate) api_provider: codex_api::Provider,
     pub(crate) api_auth: SharedAuthProvider,
     pub(crate) auth_manager: Arc<AuthManager>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub(crate) struct AuthRotationState {
+    pub(crate) rotation_id: String,
+    pub(crate) account_count: usize,
+    pub(crate) active_index: usize,
+    pub(crate) generation: u64,
+}
+
 #[derive(Debug, Deserialize)]
 struct AuthRotationEnvConfig {
     account_homes: Vec<PathBuf>,
-    #[serde(default)]
-    slot_seconds: Option<u64>,
-    #[serde(default)]
-    preconnect_lead_seconds: Option<u64>,
-    #[serde(default)]
-    stop_new_after_connected_seconds: Option<u64>,
-    #[serde(default)]
-    hard_cap_seconds: Option<u64>,
-    #[serde(default)]
-    epoch_seconds: Option<u64>,
+    rotation_id: String,
+    coordinator_url: String,
+    coordinator_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthRotationAdvanceRequest {
+    account_index: usize,
+    generation: u64,
+    reason: &'static str,
 }
 
 impl AuthRotation {
@@ -88,61 +80,61 @@ impl AuthRotation {
         Ok(Some(Self::from_config(config, chatgpt_base_url)?))
     }
 
-    #[cfg(test)]
-    pub(crate) fn timings(&self) -> AuthRotationTimings {
-        self.timings
-    }
-
     pub(crate) fn account_count(&self) -> usize {
         self.accounts.len()
     }
 
-    pub(crate) fn should_preconnect(&self, connected_at: Instant) -> bool {
-        connected_at.elapsed()
-            >= self
-                .timings
-                .slot
-                .saturating_sub(self.timings.preconnect_lead)
+    pub(crate) async fn active_state(&self) -> Result<AuthRotationState> {
+        let url = self.endpoint_url("/state");
+        let response = self
+            .http_client
+            .get(url)
+            .bearer_auth(&self.coordinator_token)
+            .send()
+            .await
+            .map_err(coordinator_error)?;
+        self.decode_state_response(response).await
     }
 
-    pub(crate) fn should_promote(&self, connected_at: Instant) -> bool {
-        let age = connected_at.elapsed();
-        age >= self.timings.slot || age >= self.timings.stop_new_after_connected
-    }
-
-    pub(crate) fn initial_account_index(&self) -> usize {
-        self.slot_index_for_time(SystemTime::now())
-    }
-
-    pub(crate) fn next_account_after(&self, account_index: usize) -> Option<usize> {
-        self.next_usable_account((account_index + 1) % self.accounts.len())
-    }
-
-    pub(crate) fn next_initial_account(&self) -> Option<usize> {
-        self.next_usable_account(self.initial_account_index())
-    }
-
-    pub(crate) fn mark_failure(&self, account_index: usize, error: &ApiError) {
-        warn!(
-            "Codex auth rotation account {account_index} failed; cooling down for {}s: {error}",
-            self.failure_cooldown.as_secs()
-        );
-        self.failures
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(account_index, Instant::now() + self.failure_cooldown);
-    }
-
-    pub(crate) fn clear_failure(&self, account_index: usize) {
-        self.failures
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&account_index);
-    }
-
-    pub(crate) async fn client_setup_for_account(
+    pub(crate) async fn advance_after_usage_limit(
         &self,
         account_index: usize,
+        generation: u64,
+    ) -> Result<AuthRotationState> {
+        let url = self.endpoint_url("/advance");
+        let response = self
+            .http_client
+            .post(url)
+            .bearer_auth(&self.coordinator_token)
+            .json(&AuthRotationAdvanceRequest {
+                account_index,
+                generation,
+                reason: "usage_limit_reached",
+            })
+            .send()
+            .await
+            .map_err(coordinator_error)?;
+        self.decode_state_response(response).await
+    }
+
+    pub(crate) async fn client_setup_for_state(
+        &self,
+        state: &AuthRotationState,
+        provider_info: &ModelProviderInfo,
+    ) -> Result<AuthRotationClientSetup> {
+        self.validate_state(state)?;
+        self.client_setup_for_account_generation(
+            state.active_index,
+            state.generation,
+            provider_info,
+        )
+        .await
+    }
+
+    pub(crate) async fn client_setup_for_account_generation(
+        &self,
+        account_index: usize,
+        generation: u64,
         provider_info: &ModelProviderInfo,
     ) -> Result<AuthRotationClientSetup> {
         let account = self.accounts.get(account_index).ok_or_else(|| {
@@ -161,6 +153,7 @@ impl AuthRotation {
         let api_auth = auth_provider_from_auth(&auth);
         Ok(AuthRotationClientSetup {
             account_index,
+            generation,
             auth,
             api_provider,
             api_auth,
@@ -179,6 +172,21 @@ impl AuthRotation {
                     .to_string(),
             ));
         }
+        if config.rotation_id.trim().is_empty() {
+            return Err(CodexErr::InvalidRequest(
+                "CODEX_AUTH_ROTATION_JSON rotation_id must not be empty".to_string(),
+            ));
+        }
+        if config.coordinator_url.trim().is_empty() {
+            return Err(CodexErr::InvalidRequest(
+                "CODEX_AUTH_ROTATION_JSON coordinator_url must not be empty".to_string(),
+            ));
+        }
+        if config.coordinator_token.trim().is_empty() {
+            return Err(CodexErr::InvalidRequest(
+                "CODEX_AUTH_ROTATION_JSON coordinator_token must not be empty".to_string(),
+            ));
+        }
         for home in &config.account_homes {
             if !home.is_absolute() {
                 return Err(CodexErr::InvalidRequest(format!(
@@ -187,43 +195,10 @@ impl AuthRotation {
                 )));
             }
         }
-
-        let slot_seconds = config.slot_seconds.unwrap_or(DEFAULT_SLOT_SECONDS);
-        let preconnect_lead_seconds = config
-            .preconnect_lead_seconds
-            .unwrap_or(DEFAULT_PRECONNECT_LEAD_SECONDS);
-        let stop_new_after_connected_seconds = config
-            .stop_new_after_connected_seconds
-            .unwrap_or(DEFAULT_STOP_NEW_AFTER_CONNECTED_SECONDS);
-        let hard_cap_seconds = config.hard_cap_seconds.unwrap_or(DEFAULT_HARD_CAP_SECONDS);
-        validate_positive("slot_seconds", slot_seconds)?;
-        validate_positive("preconnect_lead_seconds", preconnect_lead_seconds)?;
-        validate_positive(
-            "stop_new_after_connected_seconds",
-            stop_new_after_connected_seconds,
-        )?;
-        validate_positive("hard_cap_seconds", hard_cap_seconds)?;
-        if preconnect_lead_seconds >= slot_seconds {
-            return Err(CodexErr::InvalidRequest(
-                "CODEX_AUTH_ROTATION_JSON preconnect_lead_seconds must be smaller than slot_seconds"
-                    .to_string(),
-            ));
-        }
-        if slot_seconds
-            .checked_add(preconnect_lead_seconds)
-            .is_none_or(|preconnect_end_seconds| preconnect_end_seconds >= hard_cap_seconds)
-        {
-            return Err(CodexErr::InvalidRequest(
-                "CODEX_AUTH_ROTATION_JSON slot_seconds + preconnect_lead_seconds must be smaller than hard_cap_seconds"
-                    .to_string(),
-            ));
-        }
-        if stop_new_after_connected_seconds >= hard_cap_seconds {
-            return Err(CodexErr::InvalidRequest(
-                "CODEX_AUTH_ROTATION_JSON stop_new_after_connected_seconds must be smaller than hard_cap_seconds"
-                    .to_string(),
-            ));
-        }
+        let http_client = reqwest::Client::builder()
+            .timeout(COORDINATOR_REQUEST_TIMEOUT)
+            .build()
+            .map_err(coordinator_error)?;
 
         Ok(Self {
             accounts: config
@@ -234,42 +209,53 @@ impl AuthRotation {
                     manager: OnceCell::new(),
                 })
                 .collect(),
-            timings: AuthRotationTimings {
-                slot: Duration::from_secs(slot_seconds),
-                preconnect_lead: Duration::from_secs(preconnect_lead_seconds),
-                stop_new_after_connected: Duration::from_secs(stop_new_after_connected_seconds),
-                hard_cap: Duration::from_secs(hard_cap_seconds),
-            },
-            epoch_seconds: config.epoch_seconds.unwrap_or_default(),
-            failure_cooldown: Duration::from_secs(DEFAULT_FAILURE_COOLDOWN_SECONDS),
-            failures: StdMutex::new(HashMap::new()),
+            rotation_id: config.rotation_id,
+            coordinator_url: config.coordinator_url.trim_end_matches('/').to_string(),
+            coordinator_token: config.coordinator_token,
+            http_client,
             chatgpt_base_url,
         })
     }
 
-    fn slot_index_for_time(&self, time: SystemTime) -> usize {
-        let now_seconds = time
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let elapsed = now_seconds.saturating_sub(self.epoch_seconds);
-        ((elapsed / self.timings.slot.as_secs()) as usize) % self.accounts.len()
+    fn validate_state(&self, state: &AuthRotationState) -> Result<()> {
+        if state.rotation_id != self.rotation_id {
+            return Err(CodexErr::InvalidRequest(
+                "Codex auth rotation coordinator returned a different rotation_id".to_string(),
+            ));
+        }
+        if state.account_count != self.accounts.len() {
+            return Err(CodexErr::InvalidRequest(
+                "Codex auth rotation coordinator returned a different account_count".to_string(),
+            ));
+        }
+        if state.active_index >= self.accounts.len() {
+            return Err(CodexErr::InvalidRequest(format!(
+                "Codex auth rotation coordinator returned out-of-range active_index {}",
+                state.active_index
+            )));
+        }
+        Ok(())
     }
 
-    fn next_usable_account(&self, start_index: usize) -> Option<usize> {
-        let mut failures = self
-            .failures
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let now = Instant::now();
-        failures.retain(|_, retry_at| *retry_at > now);
-        for offset in 0..self.accounts.len() {
-            let account_index = (start_index + offset) % self.accounts.len();
-            if !failures.contains_key(&account_index) {
-                return Some(account_index);
-            }
+    fn endpoint_url(&self, path: &str) -> String {
+        format!("{}{}", self.coordinator_url, path)
+    }
+
+    async fn decode_state_response(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<AuthRotationState> {
+        let status = response.status();
+        let body = response.text().await.map_err(coordinator_error)?;
+        if status != StatusCode::OK {
+            return Err(CodexErr::Stream(
+                format!("Codex auth rotation coordinator returned HTTP {status}: {body}"),
+                None,
+            ));
         }
-        Some(start_index)
+        let state: AuthRotationState = serde_json::from_str(&body)?;
+        self.validate_state(&state)?;
+        Ok(state)
     }
 }
 
@@ -293,13 +279,11 @@ impl AuthRotationAccount {
     }
 }
 
-fn validate_positive(name: &str, value: u64) -> Result<()> {
-    if value == 0 {
-        return Err(CodexErr::InvalidRequest(format!(
-            "CODEX_AUTH_ROTATION_JSON {name} must be positive"
-        )));
-    }
-    Ok(())
+fn coordinator_error(error: reqwest::Error) -> CodexErr {
+    CodexErr::Stream(
+        format!("Codex auth rotation coordinator request failed: {error}"),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -309,11 +293,9 @@ mod tests {
     fn config(account_homes: Vec<PathBuf>) -> AuthRotationEnvConfig {
         AuthRotationEnvConfig {
             account_homes,
-            slot_seconds: Some(DEFAULT_SLOT_SECONDS),
-            preconnect_lead_seconds: Some(DEFAULT_PRECONNECT_LEAD_SECONDS),
-            stop_new_after_connected_seconds: Some(DEFAULT_STOP_NEW_AFTER_CONNECTED_SECONDS),
-            hard_cap_seconds: Some(DEFAULT_HARD_CAP_SECONDS),
-            epoch_seconds: Some(0),
+            rotation_id: "rotation-1".to_string(),
+            coordinator_url: "http://127.0.0.1:12345".to_string(),
+            coordinator_token: "token".to_string(),
         }
     }
 
@@ -325,17 +307,8 @@ mod tests {
         )
         .expect("rotation config should parse");
 
-        assert_eq!(
-            rotation.timings(),
-            AuthRotationTimings {
-                slot: Duration::from_secs(DEFAULT_SLOT_SECONDS),
-                preconnect_lead: Duration::from_secs(DEFAULT_PRECONNECT_LEAD_SECONDS),
-                stop_new_after_connected: Duration::from_secs(
-                    DEFAULT_STOP_NEW_AFTER_CONNECTED_SECONDS
-                ),
-                hard_cap: Duration::from_secs(DEFAULT_HARD_CAP_SECONDS),
-            }
-        );
+        assert_eq!(rotation.account_count(), 2);
+        assert_eq!(rotation.rotation_id, "rotation-1");
     }
 
     #[test]
@@ -347,38 +320,43 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_positive_timings() {
-        let mut config = config(vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]);
-        config.slot_seconds = Some(0);
+    fn rejects_non_absolute_account_home() {
+        let err = AuthRotation::from_config(
+            config(vec![PathBuf::from("/tmp/a"), PathBuf::from("relative")]),
+            None,
+        )
+        .expect_err("relative account home should fail");
 
-        let err = AuthRotation::from_config(config, None).expect_err("zero slot should fail");
-
-        assert!(err.to_string().contains("slot_seconds must be positive"));
+        assert!(err.to_string().contains("must be absolute"));
     }
 
     #[test]
-    fn rejects_preconnect_window_that_reaches_hard_cap() {
+    fn rejects_empty_coordinator_fields() {
         let mut config = config(vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]);
-        config.slot_seconds = Some(2400);
-        config.preconnect_lead_seconds = Some(100);
-        config.hard_cap_seconds = Some(2500);
+        config.coordinator_token = String::new();
 
-        let err = AuthRotation::from_config(config, None)
-            .expect_err("preconnect window should not reach hard cap");
+        let err = AuthRotation::from_config(config, None).expect_err("empty token should fail");
 
-        assert!(err.to_string().contains("hard_cap_seconds"));
+        assert!(err.to_string().contains("coordinator_token"));
     }
 
     #[test]
-    fn skips_failed_account_while_in_cooldown() {
+    fn rejects_mismatched_coordinator_state() {
         let rotation = AuthRotation::from_config(
             config(vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]),
             None,
         )
         .expect("rotation config should parse");
 
-        rotation.mark_failure(0, &ApiError::Stream("failed account".to_string()));
+        let err = rotation
+            .validate_state(&AuthRotationState {
+                rotation_id: "other".to_string(),
+                account_count: 2,
+                active_index: 0,
+                generation: 0,
+            })
+            .expect_err("mismatched state should fail");
 
-        assert_eq!(rotation.next_initial_account(), Some(1));
+        assert!(err.to_string().contains("rotation_id"));
     }
 }

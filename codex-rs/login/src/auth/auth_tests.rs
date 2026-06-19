@@ -899,6 +899,64 @@ async fn load_auth_reads_personal_access_token_from_env() {
 
 #[tokio::test]
 #[serial(codex_auth_env)]
+async fn refresh_token_from_authority_persists_refreshed_auth_json() {
+    let codex_home = tempdir().unwrap();
+    let _access_token_guard = remove_access_token_env_var();
+    let new_id_token = write_auth_file(
+        AuthFileParams {
+            openai_api_key: None,
+            chatgpt_plan_type: Some("pro".to_string()),
+            chatgpt_account_id: Some(WORKSPACE_ID_ALLOWED.to_string()),
+        },
+        codex_home.path(),
+    )
+    .expect("failed to write auth file");
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/refresh"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id_token": new_id_token,
+            "access_token": "new-access-token",
+            "refresh_token": "new-refresh-token",
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let _refresh_url_guard = EnvVarGuard::set(
+        REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR,
+        &format!("{}/refresh", server.uri()),
+    );
+    let manager = AuthManager::new(
+        codex_home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*chatgpt_base_url*/ None,
+    )
+    .await;
+
+    manager
+        .refresh_token_from_authority()
+        .await
+        .expect("refresh should succeed");
+
+    let refreshed_auth: AuthDotJson = serde_json::from_str(
+        &std::fs::read_to_string(get_auth_file(codex_home.path()))
+            .expect("auth.json should be readable"),
+    )
+    .expect("refreshed auth.json should parse");
+    let tokens = refreshed_auth.tokens.expect("tokens should be present");
+    assert_eq!(tokens.access_token, "new-access-token");
+    assert_eq!(tokens.refresh_token, "new-refresh-token");
+    assert_eq!(
+        tokens.id_token.chatgpt_account_id.as_deref(),
+        Some(WORKSPACE_ID_ALLOWED)
+    );
+    server.verify().await;
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
 async fn personal_access_token_does_not_offer_unauthorized_recovery() {
     let codex_home = tempdir().unwrap();
     let server = MockServer::start().await;

@@ -1013,7 +1013,16 @@ async fn run_sampling_request(
         Arc::clone(&router),
         Arc::clone(&turn_diff_tracker),
     );
-    let max_retries = turn_context.provider.info().stream_max_retries();
+    let max_retries = client_session
+        .auth_rotation_account_count()
+        .map(|account_count| {
+            turn_context
+                .provider
+                .info()
+                .stream_max_retries()
+                .max(account_count as u64)
+        })
+        .unwrap_or_else(|| turn_context.provider.info().stream_max_retries());
     let mut retries = 0;
     let mut initial_input = Some(input);
     loop {
@@ -1854,6 +1863,19 @@ async fn try_run_sampling_request(
 
         let event = match event {
             Some(Ok(event)) => event,
+            Some(Err(CodexErr::UsageLimitReached(err))) => {
+                let rate_limits = err.rate_limits.clone();
+                if let Some(rate_limits) = rate_limits {
+                    sess.update_rate_limits(&turn_context, *rate_limits).await;
+                }
+                if let Some(retry_err) = client_session
+                    .advance_auth_rotation_after_usage_limit()
+                    .await?
+                {
+                    break Err(retry_err);
+                }
+                break Err(CodexErr::UsageLimitReached(err));
+            }
             Some(Err(err)) => break Err(err),
             None => {
                 break Err(CodexErr::Stream(

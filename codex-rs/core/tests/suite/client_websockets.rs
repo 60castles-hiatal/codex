@@ -63,8 +63,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -77,6 +75,12 @@ use tokio_tungstenite::tungstenite::protocol::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::Instrument;
 use tracing_test::traced_test;
+use wiremock::Mock;
+use wiremock::MockServer;
+use wiremock::Respond;
+use wiremock::ResponseTemplate;
+use wiremock::matchers::method;
+use wiremock::matchers::path;
 
 const MODEL: &str = "gpt-5.3-codex";
 const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
@@ -1747,29 +1751,14 @@ async fn responses_websocket_v2_creates_with_previous_response_id_on_prefix() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
-async fn responses_websocket_auth_rotation_preconnects_and_promotes_standby() {
+async fn responses_websocket_auth_rotation_reconnects_to_coordinator_account() {
     skip_if_no_network!();
 
     let rotation_homes = TempDir::new().expect("create rotation homes");
     let account_a = create_rotation_auth_home(rotation_homes.path(), "account-a", "sk-a");
     let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
-    let epoch_seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
-    let rotation_config = json!({
-        "account_homes": [
-            account_a.to_string_lossy(),
-            account_b.to_string_lossy(),
-        ],
-        "slot_seconds": 3,
-        "preconnect_lead_seconds": 1,
-        "stop_new_after_connected_seconds": 4,
-        "hard_cap_seconds": 5,
-        "epoch_seconds": epoch_seconds,
-    })
-    .to_string();
-    let _env_guard = EnvVarGuard::set(CODEX_AUTH_ROTATION_JSON_ENV, OsStr::new(&rotation_config));
+    let (_coordinator, rotation_state, _env_guard) =
+        install_rotation_coordinator_env(&[account_a, account_b]).await;
 
     let server = ConcurrentWebSocketTestServer::start(vec![
         WebSocketConnectionConfig {
@@ -1820,13 +1809,24 @@ async fn responses_websocket_auth_rotation_preconnects_and_promotes_standby() {
     ]);
 
     stream_until_complete(&mut session, &harness, &prompt_one).await;
-    tokio::time::sleep(Duration::from_millis(2_100)).await;
-
     stream_until_complete(&mut session, &harness, &prompt_two).await;
+
+    let handshakes = server.handshakes();
+    assert_eq!(handshakes.len(), 1);
+    assert_eq!(
+        handshakes[0].header("authorization").as_deref(),
+        Some("Bearer sk-a")
+    );
+    {
+        let mut state = rotation_state.lock().expect("rotation state lock poisoned");
+        state.active_index = 1;
+        state.generation = 1;
+    }
+    stream_until_complete(&mut session, &harness, &prompt_three).await;
 
     assert!(
         server.wait_for_handshakes(2, Duration::from_secs(1)).await,
-        "standby account should preconnect before slot end"
+        "coordinator-selected account should connect"
     );
     let handshakes = server.handshakes();
     assert_eq!(
@@ -1842,16 +1842,6 @@ async fn responses_websocket_auth_rotation_preconnects_and_promotes_standby() {
     let connections = server.connections();
     assert_eq!(connections.len(), 2);
     assert_eq!(connections[0].len(), 2);
-    assert_eq!(
-        connections[1].len(),
-        0,
-        "standby connection must not receive a request before promotion"
-    );
-
-    tokio::time::sleep(Duration::from_millis(1_100)).await;
-    stream_until_complete(&mut session, &harness, &prompt_three).await;
-
-    let connections = server.connections();
     assert_eq!(connections[1].len(), 1);
     let promoted_request = &connections[1][0];
     assert_eq!(promoted_request["type"].as_str(), Some("response.create"));
@@ -1859,6 +1849,126 @@ async fn responses_websocket_auth_rotation_preconnects_and_promotes_standby() {
     assert_eq!(
         promoted_request["input"],
         serde_json::to_value(&prompt_three.input).expect("serialize full input")
+    );
+
+    server.shutdown().await;
+}
+
+#[test]
+#[serial]
+fn responses_websocket_auth_rotation_advances_and_retries_after_usage_limit() {
+    let handle = std::thread::Builder::new()
+        .name("auth-rotation-usage-limit-test".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("build current-thread runtime")
+                .block_on(
+                    responses_websocket_auth_rotation_advances_and_retries_after_usage_limit_inner(
+                    ),
+                );
+        })
+        .expect("spawn auth rotation usage-limit test thread");
+
+    if let Err(payload) = handle.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+async fn responses_websocket_auth_rotation_advances_and_retries_after_usage_limit_inner() {
+    skip_if_no_network!();
+
+    let rotation_homes = TempDir::new().expect("create rotation homes");
+    let account_a = create_rotation_auth_home(rotation_homes.path(), "account-a", "sk-a");
+    let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
+    let (_coordinator, rotation_state, _env_guard) =
+        install_rotation_coordinator_env(&[account_a, account_b]).await;
+
+    let usage_limit_error = json!({
+        "type": "error",
+        "status": 429,
+        "error": {
+            "type": "usage_limit_reached",
+            "message": "The usage limit has been reached"
+        }
+    });
+    let server = start_websocket_server(vec![
+        vec![
+            vec![
+                ev_response_created("resp-prewarm"),
+                ev_completed("resp-prewarm"),
+            ],
+            vec![usage_limit_error],
+        ],
+        vec![vec![
+            ev_response_created("resp-after-rotation"),
+            ev_completed("resp-after-rotation"),
+        ]],
+    ])
+    .await;
+    let mut builder = test_codex().with_config(|config| {
+        config.model_provider.request_max_retries = Some(0);
+        config.model_provider.stream_max_retries = Some(0);
+    });
+    let test = builder
+        .build_with_websocket_server(&server)
+        .await
+        .expect("build websocket codex");
+
+    test.submit_turn("hello")
+        .await
+        .expect("usage-limit rotation retry should complete the turn");
+
+    assert!(
+        server.wait_for_handshakes(2, Duration::from_secs(1)).await,
+        "usage limit retry should reconnect with the advanced account"
+    );
+    let handshakes = server.handshakes();
+    assert_eq!(
+        handshakes[0].header("authorization").as_deref(),
+        Some("Bearer sk-a")
+    );
+    assert_eq!(
+        handshakes[1].header("authorization").as_deref(),
+        Some("Bearer sk-b")
+    );
+
+    {
+        let state = rotation_state.lock().expect("rotation state lock poisoned");
+        assert_eq!(state.active_index, 1);
+        assert_eq!(state.generation, 1);
+        assert_eq!(
+            state.advance_requests,
+            vec![json!({
+                "account_index": 0,
+                "generation": 0,
+                "reason": "usage_limit_reached",
+            })]
+        );
+    }
+
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    assert_eq!(connections[0].len(), 2);
+    assert_eq!(connections[1].len(), 1);
+    let retry_request = connections[1][0].body_json();
+    assert_eq!(retry_request["type"].as_str(), Some("response.create"));
+    assert_eq!(retry_request.get("previous_response_id"), None);
+    let retry_input = retry_request["input"]
+        .as_array()
+        .expect("retry request input should be an array");
+    assert_eq!(
+        retry_input.last().cloned(),
+        Some(json!({
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": "hello",
+            }],
+        }))
     );
 
     server.shutdown().await;
@@ -1872,23 +1982,8 @@ async fn responses_websocket_auth_rotation_sends_compacted_history_after_account
     let rotation_homes = TempDir::new().expect("create rotation homes");
     let account_a = create_rotation_auth_home(rotation_homes.path(), "account-a", "sk-a");
     let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
-    let epoch_seconds = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock should be after unix epoch")
-        .as_secs();
-    let rotation_config = json!({
-        "account_homes": [
-            account_a.to_string_lossy(),
-            account_b.to_string_lossy(),
-        ],
-        "slot_seconds": 3,
-        "preconnect_lead_seconds": 1,
-        "stop_new_after_connected_seconds": 4,
-        "hard_cap_seconds": 5,
-        "epoch_seconds": epoch_seconds,
-    })
-    .to_string();
-    let _env_guard = EnvVarGuard::set(CODEX_AUTH_ROTATION_JSON_ENV, OsStr::new(&rotation_config));
+    let (_coordinator, rotation_state, _env_guard) =
+        install_rotation_coordinator_env(&[account_a, account_b]).await;
 
     let server = ConcurrentWebSocketTestServer::start(vec![
         WebSocketConnectionConfig {
@@ -1934,16 +2029,18 @@ async fn responses_websocket_auth_rotation_sends_compacted_history_after_account
     let compacted_prompt = prompt_with_input(compacted_input.clone());
 
     stream_until_complete(&mut session, &harness, &prompt_one).await;
-    tokio::time::sleep(Duration::from_millis(2_100)).await;
     stream_until_complete(&mut session, &harness, &prompt_two).await;
+    {
+        let mut state = rotation_state.lock().expect("rotation state lock poisoned");
+        state.active_index = 1;
+        state.generation = 1;
+    }
+    stream_until_complete(&mut session, &harness, &compacted_prompt).await;
 
     assert!(
         server.wait_for_handshakes(2, Duration::from_secs(1)).await,
-        "standby account should preconnect before compacted follow-up"
+        "coordinator-selected account should connect before compacted follow-up"
     );
-
-    tokio::time::sleep(Duration::from_millis(1_100)).await;
-    stream_until_complete(&mut session, &harness, &compacted_prompt).await;
 
     let handshakes = server.handshakes();
     assert_eq!(
@@ -2691,6 +2788,89 @@ fn create_rotation_auth_home(root: &Path, name: &str, api_key: &str) -> std::pat
     )
     .expect("write rotation auth.json");
     home
+}
+
+#[derive(Clone, Debug)]
+struct TestRotationCoordinatorState {
+    rotation_id: String,
+    account_count: usize,
+    active_index: usize,
+    generation: u64,
+    advance_requests: Vec<Value>,
+}
+
+#[derive(Clone)]
+struct TestRotationStateResponder {
+    state: Arc<Mutex<TestRotationCoordinatorState>>,
+}
+
+impl Respond for TestRotationStateResponder {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let mut state = self.state.lock().expect("rotation state lock poisoned");
+        if request.method == "POST" {
+            let body: Value = request.body_json().expect("advance body should be json");
+            state.advance_requests.push(body.clone());
+            let account_index = body.get("account_index").and_then(Value::as_u64);
+            let generation = body.get("generation").and_then(Value::as_u64);
+            let reason = body.get("reason").and_then(Value::as_str);
+            if account_index == Some(state.active_index as u64)
+                && generation == Some(state.generation)
+                && reason == Some("usage_limit_reached")
+            {
+                state.active_index = (state.active_index + 1) % state.account_count;
+                state.generation += 1;
+            }
+        }
+        ResponseTemplate::new(200).set_body_json(json!({
+            "rotation_id": state.rotation_id,
+            "account_count": state.account_count,
+            "active_index": state.active_index,
+            "generation": state.generation,
+        }))
+    }
+}
+
+async fn install_rotation_coordinator_env(
+    account_homes: &[std::path::PathBuf],
+) -> (
+    MockServer,
+    Arc<Mutex<TestRotationCoordinatorState>>,
+    EnvVarGuard,
+) {
+    let coordinator = MockServer::start().await;
+    let state = Arc::new(Mutex::new(TestRotationCoordinatorState {
+        rotation_id: "rotation-test".to_string(),
+        account_count: account_homes.len(),
+        active_index: 0,
+        generation: 0,
+        advance_requests: Vec::new(),
+    }));
+    Mock::given(method("GET"))
+        .and(path("/state"))
+        .respond_with(TestRotationStateResponder {
+            state: Arc::clone(&state),
+        })
+        .mount(&coordinator)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/advance"))
+        .respond_with(TestRotationStateResponder {
+            state: Arc::clone(&state),
+        })
+        .mount(&coordinator)
+        .await;
+    let rotation_config = json!({
+        "account_homes": account_homes
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>(),
+        "rotation_id": "rotation-test",
+        "coordinator_url": coordinator.uri(),
+        "coordinator_token": "token",
+    })
+    .to_string();
+    let env_guard = EnvVarGuard::set(CODEX_AUTH_ROTATION_JSON_ENV, OsStr::new(&rotation_config));
+    (coordinator, state, env_guard)
 }
 
 struct EnvVarGuard {
