@@ -4,8 +4,10 @@ use std::time::Duration;
 
 use codex_api::SharedAuthProvider;
 use codex_login::AuthCredentialsStoreMode;
+use codex_login::AuthDotJson;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_login::save_auth;
 use codex_model_provider::auth_provider_from_auth;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_protocol::error::CodexErr;
@@ -67,6 +69,21 @@ struct AuthRotationAdvanceRequest {
     reason: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+struct AuthRotationAccountAuthRequest {
+    account_index: usize,
+    generation: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthRotationAccountAuthResponse {
+    rotation_id: String,
+    account_count: usize,
+    account_index: usize,
+    generation: u64,
+    auth: AuthDotJson,
+}
+
 impl AuthRotation {
     pub(crate) fn from_env(chatgpt_base_url: Option<String>) -> Result<Option<Self>> {
         let Some(raw_config) = std::env::var(CODEX_AUTH_ROTATION_JSON_ENV)
@@ -115,6 +132,50 @@ impl AuthRotation {
             .await
             .map_err(coordinator_error)?;
         self.decode_state_response(response).await
+    }
+
+    pub(crate) async fn refresh_account_auth(
+        &self,
+        account_index: usize,
+        generation: u64,
+    ) -> Result<()> {
+        let account = self.accounts.get(account_index).ok_or_else(|| {
+            CodexErr::InvalidRequest(format!(
+                "auth rotation account index {account_index} is out of range"
+            ))
+        })?;
+        let url = self.endpoint_url("/account-auth");
+        let response = self
+            .http_client
+            .post(url)
+            .bearer_auth(&self.coordinator_token)
+            .json(&AuthRotationAccountAuthRequest {
+                account_index,
+                generation,
+            })
+            .send()
+            .await
+            .map_err(coordinator_error)?;
+        let auth_response = self.decode_account_auth_response(response).await?;
+        if auth_response.account_index != account_index {
+            return Err(CodexErr::InvalidRequest(
+                "Codex auth rotation coordinator returned a different account_index".to_string(),
+            ));
+        }
+        if auth_response.generation != generation {
+            return Err(CodexErr::InvalidRequest(
+                "Codex auth rotation coordinator returned a different generation".to_string(),
+            ));
+        }
+        save_auth(
+            &account.home,
+            &auth_response.auth,
+            AuthCredentialsStoreMode::File,
+        )?;
+        if let Some(manager) = account.manager.get() {
+            manager.reload().await;
+        }
+        Ok(())
     }
 
     pub(crate) async fn client_setup_for_state(
@@ -256,6 +317,38 @@ impl AuthRotation {
         let state: AuthRotationState = serde_json::from_str(&body)?;
         self.validate_state(&state)?;
         Ok(state)
+    }
+
+    async fn decode_account_auth_response(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<AuthRotationAccountAuthResponse> {
+        let status = response.status();
+        let body = response.text().await.map_err(coordinator_error)?;
+        if status != StatusCode::OK {
+            return Err(CodexErr::Stream(
+                format!("Codex auth rotation coordinator returned HTTP {status}: {body}"),
+                None,
+            ));
+        }
+        let auth_response: AuthRotationAccountAuthResponse = serde_json::from_str(&body)?;
+        if auth_response.rotation_id != self.rotation_id {
+            return Err(CodexErr::InvalidRequest(
+                "Codex auth rotation coordinator returned a different rotation_id".to_string(),
+            ));
+        }
+        if auth_response.account_count != self.accounts.len() {
+            return Err(CodexErr::InvalidRequest(
+                "Codex auth rotation coordinator returned a different account_count".to_string(),
+            ));
+        }
+        if auth_response.account_index >= self.accounts.len() {
+            return Err(CodexErr::InvalidRequest(format!(
+                "Codex auth rotation coordinator returned out-of-range account_index {}",
+                auth_response.account_index
+            )));
+        }
+        Ok(auth_response)
     }
 }
 

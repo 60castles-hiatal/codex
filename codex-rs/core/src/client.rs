@@ -1503,6 +1503,7 @@ impl ModelClientSession {
         params: &WebsocketConnectParams<'_>,
     ) -> std::result::Result<WebsocketConnectionSlot, ApiError> {
         let mut pending_retry = PendingUnauthorizedRetry::default();
+        let mut refreshed_account_auth = false;
         let mut setup = self
             .client
             .auth_rotation_account_generation_setup(rotation, account_index, generation)
@@ -1548,20 +1549,50 @@ impl ModelClientSession {
                 }
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
-                )) if status == StatusCode::UNAUTHORIZED
-                    && auth_recovery
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    if auth_recovery
                         .as_ref()
-                        .is_some_and(UnauthorizedRecovery::has_next) =>
-                {
-                    pending_retry = PendingUnauthorizedRetry::from_recovery(
-                        handle_unauthorized(
+                        .is_some_and(UnauthorizedRecovery::has_next)
+                    {
+                        match handle_unauthorized(
                             unauthorized_transport,
                             &mut auth_recovery,
                             params.session_telemetry,
                         )
                         .await
-                        .map_err(|err| ApiError::Stream(err.to_string()))?,
-                    );
+                        {
+                            Ok(recovery) => {
+                                pending_retry = PendingUnauthorizedRetry::from_recovery(recovery);
+                                setup = self
+                                    .client
+                                    .auth_rotation_account_generation_setup(
+                                        rotation,
+                                        account_index,
+                                        generation,
+                                    )
+                                    .await
+                                    .map_err(|err| ApiError::Stream(err.to_string()))?;
+                                continue;
+                            }
+                            Err(err) if refreshed_account_auth => {
+                                return Err(ApiError::Stream(err.to_string()));
+                            }
+                            Err(_err) => {}
+                        }
+                    } else if refreshed_account_auth {
+                        return Err(ApiError::Transport(unauthorized_transport));
+                    }
+
+                    rotation
+                        .refresh_account_auth(account_index, generation)
+                        .await
+                        .map_err(|err| ApiError::Stream(err.to_string()))?;
+                    refreshed_account_auth = true;
+                    pending_retry = PendingUnauthorizedRetry {
+                        retry_after_unauthorized: true,
+                        recovery_mode: Some("coordinator"),
+                        recovery_phase: Some("account_auth"),
+                    };
                     setup = self
                         .client
                         .auth_rotation_account_generation_setup(rotation, account_index, generation)

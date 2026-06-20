@@ -64,6 +64,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 use tempfile::TempDir;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio_tungstenite::accept_hdr_async_with_config;
@@ -1854,6 +1856,62 @@ async fn responses_websocket_auth_rotation_reconnects_to_coordinator_account() {
     server.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401() {
+    skip_if_no_network!();
+
+    let rotation_homes = TempDir::new().expect("create rotation homes");
+    let account_a = create_rotation_auth_home(rotation_homes.path(), "account-a", "sk-stale");
+    let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
+    let (_coordinator, rotation_state, _env_guard) =
+        install_rotation_coordinator_env(&[account_a, account_b]).await;
+    {
+        let mut state = rotation_state.lock().expect("rotation state lock poisoned");
+        state.account_auth_payloads[0] = json!({
+            "OPENAI_API_KEY": "sk-fresh",
+            "tokens": null,
+            "last_refresh": null,
+        });
+    }
+
+    let server = UnauthorizedThenWebSocketTestServer::start(vec![
+        ev_response_created("resp-after-auth-refresh"),
+        ev_completed("resp-after-auth-refresh"),
+    ])
+    .await;
+    let harness = websocket_harness_with_provider_options(
+        websocket_provider_from_uri(server.uri(), /*websocket_connect_timeout_ms*/ None),
+        /*runtime_metrics_enabled*/ true,
+    )
+    .await;
+    let mut session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
+
+    stream_until_complete(&mut session, &harness, &prompt).await;
+
+    let handshakes = server.handshakes();
+    assert_eq!(handshakes.len(), 1);
+    assert_eq!(
+        handshakes[0].header("authorization").as_deref(),
+        Some("Bearer sk-fresh")
+    );
+    assert_eq!(server.connections().len(), 1);
+    {
+        let state = rotation_state.lock().expect("rotation state lock poisoned");
+        assert_eq!(state.advance_requests, Vec::<Value>::new());
+        assert_eq!(
+            state.account_auth_requests,
+            vec![json!({
+                "account_index": 0,
+                "generation": 0,
+            })]
+        );
+    }
+
+    server.shutdown().await;
+}
+
 #[test]
 #[serial]
 fn responses_websocket_auth_rotation_advances_and_retries_after_usage_limit() {
@@ -2757,6 +2815,139 @@ impl ConcurrentWebSocketTestServer {
     }
 }
 
+struct UnauthorizedThenWebSocketTestServer {
+    uri: String,
+    connections: Arc<Mutex<Vec<Vec<Value>>>>,
+    handshakes: Arc<Mutex<Vec<ConcurrentWebSocketHandshake>>>,
+    shutdown: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl UnauthorizedThenWebSocketTestServer {
+    async fn start(response_events: Vec<Value>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind unauthorised websocket server");
+        let addr = listener
+            .local_addr()
+            .expect("unauthorised websocket server address");
+        let uri = format!("ws://{addr}");
+        let connections_log = Arc::new(Mutex::new(Vec::new()));
+        let handshakes_log = Arc::new(Mutex::new(Vec::new()));
+        let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+
+        let task = {
+            let connections_log = Arc::clone(&connections_log);
+            let handshakes_log = Arc::clone(&handshakes_log);
+            tokio::spawn(async move {
+                let Ok((mut rejected_stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut ignored_request = [0_u8; 4096];
+                let _ = rejected_stream.read(&mut ignored_request).await;
+                let _ = rejected_stream
+                    .write_all(
+                        b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
+                    .await;
+                let _ = rejected_stream.shutdown().await;
+
+                let accept_result = tokio::select! {
+                    _ = shutdown_rx.changed() => return,
+                    accept_result = listener.accept() => accept_result,
+                };
+                let Ok((stream, _)) = accept_result else {
+                    return;
+                };
+
+                let handshake_log = Arc::clone(&handshakes_log);
+                let callback = move |req: &Request, response: Response| {
+                    let headers = req
+                        .headers()
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            value
+                                .to_str()
+                                .ok()
+                                .map(|value| (name.as_str().to_string(), value.to_string()))
+                        })
+                        .collect();
+                    handshake_log
+                        .lock()
+                        .unwrap()
+                        .push(ConcurrentWebSocketHandshake { headers });
+
+                    Ok(response)
+                };
+
+                let mut ws_stream = match accept_hdr_async_with_config(
+                    stream,
+                    callback,
+                    Some(test_websocket_accept_config()),
+                )
+                .await
+                {
+                    Ok(ws_stream) => ws_stream,
+                    Err(_) => return,
+                };
+
+                let message = tokio::select! {
+                    _ = shutdown_rx.changed() => return,
+                    message = ws_stream.next() => message,
+                };
+                let mut connection_log = Vec::new();
+                if let Some(Ok(message)) = message
+                    && let Some(body) = parse_test_ws_request_body(message)
+                {
+                    connection_log.push(body);
+                }
+                connections_log.lock().unwrap().push(connection_log);
+
+                for event in &response_events {
+                    let Ok(payload) = serde_json::to_string(event) else {
+                        continue;
+                    };
+                    if ws_stream.send(Message::Text(payload.into())).await.is_err() {
+                        break;
+                    }
+                }
+                let _ = shutdown_rx.changed().await;
+            })
+        };
+
+        Self {
+            uri,
+            connections: connections_log,
+            handshakes: handshakes_log,
+            shutdown: shutdown_tx,
+            task,
+        }
+    }
+
+    fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    fn handshakes(&self) -> Vec<ConcurrentWebSocketHandshake> {
+        self.handshakes.lock().unwrap().clone()
+    }
+
+    fn connections(&self) -> Vec<Vec<Value>> {
+        self.connections.lock().unwrap().clone()
+    }
+
+    async fn shutdown(self) {
+        let _ = self.shutdown.send(true);
+        let mut task = self.task;
+        if tokio::time::timeout(Duration::from_secs(10), &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+        }
+    }
+}
+
 fn test_websocket_accept_config() -> WebSocketConfig {
     let mut extensions = ExtensionsConfig::default();
     extensions.permessage_deflate = Some(DeflateConfig::default());
@@ -2797,6 +2988,8 @@ struct TestRotationCoordinatorState {
     active_index: usize,
     generation: u64,
     advance_requests: Vec<Value>,
+    account_auth_requests: Vec<Value>,
+    account_auth_payloads: Vec<Value>,
 }
 
 #[derive(Clone)]
@@ -2830,6 +3023,42 @@ impl Respond for TestRotationStateResponder {
     }
 }
 
+#[derive(Clone)]
+struct TestRotationAccountAuthResponder {
+    state: Arc<Mutex<TestRotationCoordinatorState>>,
+}
+
+impl Respond for TestRotationAccountAuthResponder {
+    fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+        let mut state = self.state.lock().expect("rotation state lock poisoned");
+        let body: Value = request
+            .body_json()
+            .expect("account auth body should be json");
+        state.account_auth_requests.push(body.clone());
+        let account_index = body
+            .get("account_index")
+            .and_then(Value::as_u64)
+            .expect("account_index should be present") as usize;
+        let generation = body
+            .get("generation")
+            .and_then(Value::as_u64)
+            .expect("generation should be present");
+        let auth = state
+            .account_auth_payloads
+            .get(account_index)
+            .cloned()
+            .expect("account auth payload should exist");
+
+        ResponseTemplate::new(200).set_body_json(json!({
+            "rotation_id": state.rotation_id,
+            "account_count": state.account_count,
+            "account_index": account_index,
+            "generation": generation,
+            "auth": auth,
+        }))
+    }
+}
+
 async fn install_rotation_coordinator_env(
     account_homes: &[std::path::PathBuf],
 ) -> (
@@ -2844,6 +3073,15 @@ async fn install_rotation_coordinator_env(
         active_index: 0,
         generation: 0,
         advance_requests: Vec::new(),
+        account_auth_requests: Vec::new(),
+        account_auth_payloads: account_homes
+            .iter()
+            .map(|home| {
+                let auth_json = std::fs::read_to_string(home.join("auth.json"))
+                    .expect("read rotation auth home");
+                serde_json::from_str(&auth_json).expect("rotation auth should be json")
+            })
+            .collect(),
     }));
     Mock::given(method("GET"))
         .and(path("/state"))
@@ -2855,6 +3093,13 @@ async fn install_rotation_coordinator_env(
     Mock::given(method("POST"))
         .and(path("/advance"))
         .respond_with(TestRotationStateResponder {
+            state: Arc::clone(&state),
+        })
+        .mount(&coordinator)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/account-auth"))
+        .respond_with(TestRotationAccountAuthResponder {
             state: Arc::clone(&state),
         })
         .mount(&coordinator)
