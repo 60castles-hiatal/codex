@@ -55,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -y
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sccache zstd
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils sccache zstd
 
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
@@ -143,6 +143,18 @@ jobs:
           for binary in ${{ matrix.binaries }}; do
             cp "target/${target}/release/${binary}" "$dest/${binary}-${target}"
           done
+
+          staged_binaries=()
+          for binary in ${{ matrix.binaries }}; do
+            staged_binaries+=("${binary}-${target}")
+          done
+
+          bash "${GITHUB_WORKSPACE}/.github/scripts/archive-release-symbols-and-strip-binaries.sh" \
+            --target "$target" \
+            --artifact-name "$target" \
+            --release-dir "$dest" \
+            --archive-dir "$dest" \
+            --binaries "${staged_binaries[*]}"
 
           bundle_root="${RUNNER_TEMP}/codex-${target}-bundle"
           rm -rf "$bundle_root"
