@@ -1,4 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use codex_api::WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY;
 use codex_api::WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY;
 use codex_core::ModelClient;
@@ -8,6 +10,7 @@ use codex_core::ResponseEvent;
 use codex_core::X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER;
 use codex_features::Feature;
 use codex_login::CodexAuth;
+use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_otel::MetricsClient;
@@ -1862,18 +1865,39 @@ async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401()
     skip_if_no_network!();
 
     let rotation_homes = TempDir::new().expect("create rotation homes");
-    let account_a = create_rotation_auth_home(rotation_homes.path(), "account-a", "sk-stale");
+    let account_a = create_rotation_chatgpt_auth_home(
+        rotation_homes.path(),
+        "account-a",
+        "stale-access-token",
+        "stale-refresh-token",
+        "acct-rotation-a",
+        "2020-01-01T00:00:00Z",
+    );
     let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
     let (_coordinator, rotation_state, _env_guard) =
         install_rotation_coordinator_env(&[account_a, account_b]).await;
     {
         let mut state = rotation_state.lock().expect("rotation state lock poisoned");
-        state.account_auth_payloads[0] = json!({
-            "OPENAI_API_KEY": "sk-fresh",
-            "tokens": null,
-            "last_refresh": null,
-        });
+        state.account_auth_payloads[0] = chatgpt_auth_payload(
+            "fresh-access-token",
+            "fresh-refresh-token",
+            "acct-rotation-a",
+            "2099-01-01T00:00:00Z",
+        );
     }
+    let refresh_authority = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "direct-refresh-access-token",
+            "refresh_token": "direct-refresh-token",
+        })))
+        .expect(0)
+        .mount(&refresh_authority)
+        .await;
+    let refresh_url = format!("{}/oauth/token", refresh_authority.uri());
+    let _refresh_env_guard =
+        EnvVarGuard::set(REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR, OsStr::new(&refresh_url));
 
     let server = UnauthorizedThenWebSocketTestServer::start(vec![
         ev_response_created("resp-after-auth-refresh"),
@@ -1894,7 +1918,7 @@ async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401()
     assert_eq!(handshakes.len(), 1);
     assert_eq!(
         handshakes[0].header("authorization").as_deref(),
-        Some("Bearer sk-fresh")
+        Some("Bearer fresh-access-token")
     );
     assert_eq!(server.connections().len(), 1);
     {
@@ -1909,6 +1933,7 @@ async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401()
         );
     }
 
+    refresh_authority.verify().await;
     server.shutdown().await;
 }
 
@@ -2979,6 +3004,59 @@ fn create_rotation_auth_home(root: &Path, name: &str, api_key: &str) -> std::pat
     )
     .expect("write rotation auth.json");
     home
+}
+
+fn create_rotation_chatgpt_auth_home(
+    root: &Path,
+    name: &str,
+    access_token: &str,
+    refresh_token: &str,
+    account_id: &str,
+    last_refresh: &str,
+) -> std::path::PathBuf {
+    let home = root.join(name);
+    std::fs::create_dir_all(&home).expect("create rotation account home");
+    std::fs::write(
+        home.join("auth.json"),
+        chatgpt_auth_payload(access_token, refresh_token, account_id, last_refresh).to_string(),
+    )
+    .expect("write rotation auth.json");
+    home
+}
+
+fn chatgpt_auth_payload(
+    access_token: &str,
+    refresh_token: &str,
+    account_id: &str,
+    last_refresh: &str,
+) -> Value {
+    json!({
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "id_token": fake_chatgpt_jwt(account_id),
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "account_id": account_id,
+        },
+        "last_refresh": last_refresh,
+    })
+}
+
+fn fake_chatgpt_jwt(account_id: &str) -> String {
+    let header = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({ "alg": "none", "typ": "JWT" })).expect("serialize jwt header"),
+    );
+    let payload = URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&json!({
+            "https://api.openai.com/auth": {
+                "chatgpt_account_id": account_id,
+                "chatgpt_plan_type": "pro",
+            }
+        }))
+        .expect("serialize jwt payload"),
+    );
+    let signature = URL_SAFE_NO_PAD.encode(b"signature");
+    format!("{header}.{payload}.{signature}")
 }
 
 #[derive(Clone, Debug)]

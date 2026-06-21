@@ -43,7 +43,6 @@ pub(crate) struct AuthRotationClientSetup {
     pub(crate) auth: CodexAuth,
     pub(crate) api_provider: codex_api::Provider,
     pub(crate) api_auth: SharedAuthProvider,
-    pub(crate) auth_manager: Arc<AuthManager>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -204,7 +203,7 @@ impl AuthRotation {
             ))
         })?;
         let manager = account.manager(self.chatgpt_base_url.clone()).await;
-        let auth = manager.auth().await.ok_or_else(|| {
+        let auth = manager.auth_cached().ok_or_else(|| {
             CodexErr::InvalidRequest(format!(
                 "auth rotation account {account_index} has no usable auth at {}",
                 account.home.display()
@@ -218,7 +217,6 @@ impl AuthRotation {
             auth,
             api_provider,
             api_auth,
-            auth_manager: manager,
         })
     }
 

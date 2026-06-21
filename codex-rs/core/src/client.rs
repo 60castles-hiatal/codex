@@ -201,7 +201,6 @@ struct CurrentClientSetup {
     auth: Option<CodexAuth>,
     api_provider: ApiProvider,
     api_auth: SharedAuthProvider,
-    auth_manager: Option<Arc<AuthManager>>,
     rotation_account_index: Option<usize>,
     rotation_generation: Option<u64>,
 }
@@ -879,7 +878,6 @@ impl ModelClient {
             auth,
             api_provider,
             api_auth,
-            auth_manager: self.state.provider.auth_manager(),
             rotation_account_index: None,
             rotation_generation: None,
         })
@@ -904,7 +902,6 @@ impl ModelClient {
             auth,
             api_provider,
             api_auth,
-            auth_manager,
         } = rotation
             .client_setup_for_state(state, self.state.provider.info())
             .await?;
@@ -912,7 +909,6 @@ impl ModelClient {
             auth: Some(auth),
             api_provider,
             api_auth,
-            auth_manager: Some(auth_manager),
             rotation_account_index: Some(account_index),
             rotation_generation: Some(generation),
         })
@@ -930,7 +926,6 @@ impl ModelClient {
             auth,
             api_provider,
             api_auth,
-            auth_manager,
         } = rotation
             .client_setup_for_account_generation(
                 account_index,
@@ -942,7 +937,6 @@ impl ModelClient {
             auth: Some(auth),
             api_provider,
             api_auth,
-            auth_manager: Some(auth_manager),
             rotation_account_index: Some(account_index),
             rotation_generation: Some(generation),
         })
@@ -1509,15 +1503,6 @@ impl ModelClientSession {
             .auth_rotation_account_generation_setup(rotation, account_index, generation)
             .await
             .map_err(|err| ApiError::Stream(err.to_string()))?;
-        let mut auth_recovery = Some(
-            setup
-                .auth_manager
-                .as_ref()
-                .ok_or_else(|| {
-                    ApiError::Stream("Codex auth rotation account has no auth manager".to_string())
-                })?
-                .unauthorized_recovery(),
-        );
 
         loop {
             let auth_context = AuthRequestTelemetryContext::new(
@@ -1550,36 +1535,7 @@ impl ModelClientSession {
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
                 )) if status == StatusCode::UNAUTHORIZED => {
-                    if auth_recovery
-                        .as_ref()
-                        .is_some_and(UnauthorizedRecovery::has_next)
-                    {
-                        match handle_unauthorized(
-                            unauthorized_transport,
-                            &mut auth_recovery,
-                            params.session_telemetry,
-                        )
-                        .await
-                        {
-                            Ok(recovery) => {
-                                pending_retry = PendingUnauthorizedRetry::from_recovery(recovery);
-                                setup = self
-                                    .client
-                                    .auth_rotation_account_generation_setup(
-                                        rotation,
-                                        account_index,
-                                        generation,
-                                    )
-                                    .await
-                                    .map_err(|err| ApiError::Stream(err.to_string()))?;
-                                continue;
-                            }
-                            Err(err) if refreshed_account_auth => {
-                                return Err(ApiError::Stream(err.to_string()));
-                            }
-                            Err(_err) => {}
-                        }
-                    } else if refreshed_account_auth {
+                    if refreshed_account_auth {
                         return Err(ApiError::Transport(unauthorized_transport));
                     }
 
@@ -1598,17 +1554,6 @@ impl ModelClientSession {
                         .auth_rotation_account_generation_setup(rotation, account_index, generation)
                         .await
                         .map_err(|err| ApiError::Stream(err.to_string()))?;
-                    auth_recovery = Some(
-                        setup
-                            .auth_manager
-                            .as_ref()
-                            .ok_or_else(|| {
-                                ApiError::Stream(
-                                    "Codex auth rotation account has no auth manager".to_string(),
-                                )
-                            })?
-                            .unauthorized_recovery(),
-                    );
                 }
                 Err(err) => return Err(err),
             }
