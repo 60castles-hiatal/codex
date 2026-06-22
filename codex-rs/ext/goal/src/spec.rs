@@ -69,7 +69,7 @@ pub fn create_update_goal_tool() -> ToolSpec {
         ),
     )]);
 
-ToolSpec::Function(ResponsesApiTool {
+    ToolSpec::Function(ResponsesApiTool {
         name: UPDATE_GOAL_TOOL_NAME.to_string(),
         description: r#"Update the existing goal.
 Use this tool only to mark the goal achieved.

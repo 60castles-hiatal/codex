@@ -28,6 +28,20 @@ pub(crate) async fn handle_retryable_response_stream_error(
     turn_context: &TurnContext,
     request: ResponsesStreamRequest,
 ) -> Result<(), CodexErr> {
+    let auth_rotation_retry = matches!(err, CodexErr::AuthRotationRetry(_));
+    if auth_rotation_retry {
+        log_retry(
+            request,
+            turn_context,
+            &err,
+            *retries + 1,
+            max_retries,
+            Duration::ZERO,
+        );
+        tokio::time::sleep(Duration::ZERO).await;
+        return Ok(());
+    }
+
     if *retries >= max_retries
         && client_session.try_switch_fallback_transport(
             &turn_context.session_telemetry,
