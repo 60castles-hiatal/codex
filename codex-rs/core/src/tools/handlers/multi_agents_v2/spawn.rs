@@ -8,6 +8,7 @@ use crate::tools::handlers::multi_agents_spec::SpawnAgentToolOptions;
 use crate::tools::handlers::multi_agents_spec::create_spawn_agent_tool_v2;
 use crate::turn_timing::now_unix_timestamp_ms;
 use codex_protocol::AgentPath;
+use codex_protocol::models::ResponseItemMetadata;
 use codex_protocol::protocol::Op;
 use codex_tools::ToolSpec;
 
@@ -22,7 +23,6 @@ impl Handler {
     }
 }
 
-#[async_trait::async_trait]
 impl ToolExecutor<ToolInvocation> for Handler {
     fn tool_name(&self) -> ToolName {
         ToolName::plain("spawn_agent")
@@ -32,11 +32,8 @@ impl ToolExecutor<ToolInvocation> for Handler {
         create_spawn_agent_tool_v2(self.options.clone())
     }
 
-    async fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
-        handle_spawn_agent(invocation).await.map(boxed_tool_output)
+    fn handle(&self, invocation: ToolInvocation) -> codex_tools::ToolExecutorFuture<'_> {
+        Box::pin(async move { handle_spawn_agent(invocation).await.map(boxed_tool_output) })
     }
 }
 
@@ -53,6 +50,11 @@ async fn handle_spawn_agent(
     let arguments = function_arguments(payload)?;
     let args: SpawnAgentArgs = parse_arguments(&arguments)?;
     let fork_mode = args.fork_mode()?;
+    let multi_agent_mode = crate::session::multi_agents::effective_multi_agent_mode(
+        turn.multi_agent_version,
+        &turn.session_source,
+        turn.multi_agent_mode,
+    );
     let role_name = args
         .agent_type
         .as_deref()
@@ -121,8 +123,12 @@ async fn handle_spawn_agent(
                         .session_source
                         .get_agent_path()
                         .unwrap_or_else(AgentPath::root);
-                    let communication =
+                    let mut communication =
                         communication_from_tool_message(author, new_agent_path.clone(), message);
+                    communication
+                        .metadata
+                        .get_or_insert_with(ResponseItemMetadata::default)
+                        .source_call_id = Some(call_id.clone());
                     Op::InterAgentCommunication { communication }
                 }
                 initial_operation => initial_operation,
@@ -133,6 +139,7 @@ async fn handle_spawn_agent(
                 fork_mode,
                 parent_thread_id: Some(session.thread_id),
                 environments: Some(turn.environments.to_selections()),
+                initial_multi_agent_mode: multi_agent_mode,
             },
         ),
     )
