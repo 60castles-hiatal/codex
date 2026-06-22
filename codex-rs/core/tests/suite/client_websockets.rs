@@ -1875,7 +1875,7 @@ async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401()
     );
     let account_b = create_rotation_auth_home(rotation_homes.path(), "account-b", "sk-b");
     let (_coordinator, rotation_state, _env_guard) =
-        install_rotation_coordinator_env(&[account_a, account_b]).await;
+        install_rotation_coordinator_env(&[account_a.clone(), account_b]).await;
     {
         let mut state = rotation_state.lock().expect("rotation state lock poisoned");
         state.account_auth_payloads[0] = chatgpt_auth_payload(
@@ -1932,6 +1932,15 @@ async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401()
             })]
         );
     }
+    let account_auth_json = std::fs::read_to_string(account_a.join("auth.json"))
+        .expect("rotation auth file should remain readable");
+    let account_auth: Value =
+        serde_json::from_str(&account_auth_json).expect("rotation auth should remain json");
+    assert_eq!(
+        account_auth["tokens"]["refresh_token"].as_str(),
+        Some("stale-refresh-token")
+    );
+    assert_eq!(account_auth["auth_mode"].as_str(), Some("chatgpt"));
 
     refresh_authority.verify().await;
     server.shutdown().await;

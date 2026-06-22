@@ -3,10 +3,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use codex_api::SharedAuthProvider;
+use codex_app_server_protocol::AuthMode;
 use codex_login::AuthCredentialsStoreMode;
 use codex_login::AuthDotJson;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_login::load_auth_dot_json;
 use codex_login::save_auth;
 use codex_model_provider::auth_provider_from_auth;
 use codex_model_provider_info::ModelProviderInfo;
@@ -166,11 +168,7 @@ impl AuthRotation {
                 "Codex auth rotation coordinator returned a different generation".to_string(),
             ));
         }
-        save_auth(
-            &account.home,
-            &auth_response.auth,
-            AuthCredentialsStoreMode::File,
-        )?;
+        account.save_external_auth_snapshot(auth_response.auth)?;
         if let Some(manager) = account.manager.get() {
             manager.reload().await;
         }
@@ -202,6 +200,7 @@ impl AuthRotation {
                 "auth rotation account index {account_index} is out of range"
             ))
         })?;
+        account.initialise_external_auth_snapshot()?;
         let manager = account.manager(self.chatgpt_base_url.clone()).await;
         let auth = manager.auth_cached().ok_or_else(|| {
             CodexErr::InvalidRequest(format!(
@@ -351,6 +350,35 @@ impl AuthRotation {
 }
 
 impl AuthRotationAccount {
+    fn initialise_external_auth_snapshot(&self) -> Result<()> {
+        if self.manager.get().is_some() {
+            return Ok(());
+        }
+        let Some(auth) =
+            load_auth_dot_json(&self.home, AuthCredentialsStoreMode::File).map_err(auth_error)?
+        else {
+            return Ok(());
+        };
+        if !is_chatgpt_auth(&auth) {
+            return Ok(());
+        }
+        self.save_external_auth_snapshot(auth)
+    }
+
+    fn save_external_auth_snapshot(&self, mut auth: AuthDotJson) -> Result<()> {
+        if is_chatgpt_auth(&auth) {
+            auth.auth_mode = Some(AuthMode::ChatgptAuthTokens);
+            if let Some(tokens) = auth.tokens.as_mut() {
+                tokens.refresh_token.clear();
+            }
+            save_auth(&self.home, &auth, AuthCredentialsStoreMode::Ephemeral)
+                .map_err(auth_error)?;
+        } else {
+            save_auth(&self.home, &auth, AuthCredentialsStoreMode::File).map_err(auth_error)?;
+        }
+        Ok(())
+    }
+
     async fn manager(&self, chatgpt_base_url: Option<String>) -> Arc<AuthManager> {
         Arc::clone(
             self.manager
@@ -368,6 +396,24 @@ impl AuthRotationAccount {
                 .await,
         )
     }
+}
+
+fn is_chatgpt_auth(auth: &AuthDotJson) -> bool {
+    let has_chatgpt_tokens = auth.tokens.is_some()
+        && auth.openai_api_key.is_none()
+        && auth.agent_identity.is_none()
+        && auth.personal_access_token.is_none();
+    matches!(
+        auth.auth_mode,
+        Some(AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens)
+    ) || (auth.auth_mode.is_none() && has_chatgpt_tokens)
+}
+
+fn auth_error(error: std::io::Error) -> CodexErr {
+    CodexErr::Stream(
+        format!("Codex auth rotation auth storage failed: {error}"),
+        None,
+    )
 }
 
 fn coordinator_error(error: reqwest::Error) -> CodexErr {
