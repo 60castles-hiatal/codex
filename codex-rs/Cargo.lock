@@ -1887,7 +1887,7 @@ dependencies = [
  "ed25519-dalek",
  "jsonwebtoken",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.10.1",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2396,7 +2396,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.10.1",
  "rcgen",
  "reqwest 0.12.28",
  "rustls",
@@ -2691,7 +2691,7 @@ dependencies = [
  "opentelemetry_sdk",
  "predicates",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.10.1",
  "regex-lite",
  "reqwest 0.12.28",
  "rmcp",
@@ -3257,7 +3257,7 @@ dependencies = [
  "once_cell",
  "os_info",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.10.1",
  "regex-lite",
  "reqwest 0.12.28",
  "serde",
@@ -3824,7 +3824,7 @@ dependencies = [
  "codex-keyring-store",
  "keyring",
  "pretty_assertions",
- "rand 0.9.3",
+ "rand 0.10.1",
  "regex",
  "schemars 0.8.22",
  "serde",
@@ -4085,7 +4085,7 @@ dependencies = [
  "pathdiff",
  "pretty_assertions",
  "pulldown-cmark",
- "rand 0.9.3",
+ "rand 0.10.1",
  "ratatui",
  "ratatui-macros",
  "regex-lite",
@@ -7563,7 +7563,7 @@ dependencies = [
  "idna",
  "ipnet",
  "once_cell",
- "rand 0.9.3",
+ "rand 0.9.4",
  "ring",
  "thiserror 2.0.18",
  "tinyvec",
@@ -7585,7 +7585,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot",
- "rand 0.9.3",
+ "rand 0.9.4",
  "resolv-conf",
  "smallvec",
  "thiserror 2.0.18",
@@ -9846,7 +9846,7 @@ dependencies = [
  "futures-util",
  "opentelemetry",
  "percent-encoding",
- "rand 0.9.3",
+ "rand 0.9.4",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -10478,7 +10478,7 @@ checksum = "bee689443a2bd0a16ab0348b52ee43e3b2d1b1f931c8aa5c9f8de4c86fbe8c40"
 dependencies = [
  "bitflags 2.10.0",
  "num-traits",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -10512,7 +10512,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.11.0",
  "log",
  "multimap",
@@ -10699,7 +10699,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.3",
+ "rand 0.9.4",
  "ring",
  "rustc-hash 2.1.1",
  "rustls",
@@ -10837,7 +10837,7 @@ dependencies = [
  "rama-http-types",
  "rama-net",
  "rama-utils",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "serde_html_form",
  "serde_json",
@@ -10907,7 +10907,7 @@ dependencies = [
  "rama-macros",
  "rama-net",
  "rama-utils",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "sha1 0.10.6",
 ]
@@ -10935,7 +10935,7 @@ dependencies = [
  "rama-error",
  "rama-macros",
  "rama-utils",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "sync_wrapper",
@@ -11009,7 +11009,7 @@ dependencies = [
  "rama-http-types",
  "rama-net",
  "rama-utils",
- "rand 0.9.3",
+ "rand 0.9.4",
  "tokio",
 ]
 
@@ -11089,9 +11089,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -12073,7 +12073,7 @@ version = "0.46.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26ab054c34b87f96c3e4701bea1888317cde30cc7e4a6136d2c48454ab96661c"
 dependencies = [
- "rand 0.9.3",
+ "rand 0.9.4",
  "sentry-types",
  "serde",
  "serde_json",
@@ -12121,7 +12121,7 @@ checksum = "eecbd63e9d15a26a40675ed180d376fcb434635d2e33de1c24003f61e3e2230d"
 dependencies = [
  "debugid",
  "hex",
- "rand 0.9.3",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -14044,7 +14044,7 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
- "rand 0.9.3",
+ "rand 0.9.4",
  "rustls",
  "rustls-pki-types",
  "sha1 0.10.6",
