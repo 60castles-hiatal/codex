@@ -163,6 +163,10 @@ pub struct ConfigToml {
     /// Size of the context window for the model, in tokens.
     pub model_context_window: Option<i64>,
 
+    /// Per-model context window overrides, keyed by model slug.
+    #[serde(default)]
+    pub model_context_window_overrides: BTreeMap<String, i64>,
+
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
 

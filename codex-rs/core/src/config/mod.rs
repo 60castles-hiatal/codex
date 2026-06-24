@@ -627,6 +627,9 @@ pub struct Config {
     /// Size of the context window for the model, in tokens.
     pub model_context_window: Option<i64>,
 
+    /// Per-model context window overrides, keyed by model slug.
+    pub model_context_window_overrides: BTreeMap<String, i64>,
+
     /// Token usage threshold triggering auto-compaction of conversation history.
     pub model_auto_compact_token_limit: Option<i64>,
 
@@ -1456,6 +1459,7 @@ impl Config {
     pub fn to_models_manager_config(&self) -> ModelsManagerConfig {
         ModelsManagerConfig {
             model_context_window: self.model_context_window,
+            model_context_window_overrides: self.model_context_window_overrides.clone(),
             model_auto_compact_token_limit: self.model_auto_compact_token_limit,
             tool_output_token_limit: self.tool_output_token_limit,
             base_instructions: self.base_instructions.clone(),
@@ -1862,6 +1866,26 @@ fn load_model_catalog(
     model_catalog_json
         .map(|path| load_catalog_json(&path))
         .transpose()
+}
+
+fn validate_model_context_window_overrides(
+    overrides: &BTreeMap<String, i64>,
+) -> std::io::Result<()> {
+    for (model, context_window) in overrides {
+        if model.trim().is_empty() {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "model_context_window_overrides keys must not be empty",
+            ));
+        }
+        if *context_window <= 0 {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                format!("model_context_window_overrides.{model} must be positive"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn filter_mcp_servers_by_requirements(
@@ -2918,6 +2942,7 @@ impl Config {
 
         validate_model_providers(&cfg.model_providers)
             .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidInput, message))?;
+        validate_model_context_window_overrides(&cfg.model_context_window_overrides)?;
         let orchestrator = cfg.orchestrator.as_ref();
         let orchestrator_skills_enabled =
             resolve_orchestrator_feature_enabled(orchestrator.and_then(|value| value.skills.as_ref()));
@@ -3750,6 +3775,7 @@ impl Config {
             service_tier,
             review_model,
             model_context_window: cfg.model_context_window,
+            model_context_window_overrides: cfg.model_context_window_overrides.clone(),
             model_auto_compact_token_limit: cfg.model_auto_compact_token_limit,
             model_auto_compact_token_limit_scope: cfg
                 .model_auto_compact_token_limit_scope

@@ -5198,6 +5198,15 @@
       "format": "int64",
       "type": "integer"
     },
+    "model_context_window_overrides": {
+      "additionalProperties": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "default": {},
+      "description": "Per-model context window overrides, keyed by model slug.",
+      "type": "object"
+    },
     "model_instructions_file": {
       "allOf": [
         {
