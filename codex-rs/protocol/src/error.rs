@@ -111,8 +111,6 @@ pub enum CodexErr {
     InvalidImageRequest(),
     #[error("{0}")]
     UsageLimitReached(UsageLimitReachedError),
-    #[error("{0}")]
-    AuthRotationRetry(String),
     #[error("Selected model is at capacity. Please try a different model.")]
     ServerOverloaded,
     #[error("{message}")]
@@ -195,8 +193,7 @@ impl CodexErr {
             | CodexErr::UsageLimitReached(_)
             | CodexErr::ServerOverloaded
             | CodexErr::CyberPolicy { .. } => false,
-            CodexErr::AuthRotationRetry(_)
-            | CodexErr::Stream(..)
+            CodexErr::Stream(..)
             | CodexErr::Timeout
             | CodexErr::RequestTimeout
             | CodexErr::UnexpectedStatus(_)
@@ -226,9 +223,6 @@ impl CodexErr {
             CodexErr::UsageLimitReached(_)
             | CodexErr::QuotaExceeded
             | CodexErr::UsageNotIncluded => CodexErrorInfo::UsageLimitExceeded,
-            CodexErr::AuthRotationRetry(_) => CodexErrorInfo::ResponseStreamConnectionFailed {
-                http_status_code: None,
-            },
             CodexErr::ServerOverloaded => CodexErrorInfo::ServerOverloaded,
             CodexErr::CyberPolicy { .. } => CodexErrorInfo::CyberPolicy,
             CodexErr::RetryLimit(_) => CodexErrorInfo::ResponseTooManyFailedAttempts {

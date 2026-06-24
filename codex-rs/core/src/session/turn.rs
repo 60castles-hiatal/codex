@@ -42,6 +42,7 @@ use crate::responses_retry::handle_retryable_response_stream_error;
 use crate::session::PreviousTurnSettings;
 use crate::session::TurnInput;
 use crate::session::session::Session;
+use crate::session::step_context::StepContext;
 use crate::session::turn_context::TurnContext;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::TurnItemContributorPolicy;
@@ -240,6 +241,21 @@ pub(crate) async fn run_turn(
                 &window_id,
             )
             .await?;
+
+            if turn_context
+                .config
+                .features
+                .enabled(Feature::DeferredExecutor)
+            {
+                let step_context = StepContext {
+                    environments: sess.services.turn_environments.snapshot().await,
+                };
+                sess.record_step_environment_context_if_changed(
+                    turn_context.as_ref(),
+                    &step_context,
+                )
+                .await;
+            }
 
             // Construct the input that we will send to the model.
             let sampling_request_input: Vec<ResponseItem> = async {
@@ -640,13 +656,16 @@ async fn build_skills_and_plugins(
     sess.services
         .analytics_events_client
         .track_app_mentioned(tracking.clone(), mentioned_app_invocations);
-    for plugin in mentioned_plugins
-        .iter()
-        .filter_map(crate::plugins::PluginCapabilitySummary::telemetry_metadata)
-    {
-        sess.services
-            .analytics_events_client
-            .track_plugin_used(tracking.clone(), plugin);
+    for summary in &mentioned_plugins {
+        if let Some(plugin) = sess
+            .services
+            .plugins_manager
+            .telemetry_metadata_for_capability_summary(summary)
+        {
+            sess.services
+                .analytics_events_client
+                .track_plugin_used(tracking.clone(), plugin);
+        }
     }
 
     let mut injection_items: Vec<ResponseItem> = match injected_host_skill_prompts {
@@ -1130,16 +1149,7 @@ async fn run_sampling_request(
         Arc::clone(&router),
         Arc::clone(&turn_diff_tracker),
     );
-    let max_retries = client_session
-        .auth_rotation_account_count()
-        .map(|account_count| {
-            turn_context
-                .provider
-                .info()
-                .stream_max_retries()
-                .max(account_count as u64)
-        })
-        .unwrap_or_else(|| turn_context.provider.info().stream_max_retries());
+    let max_retries = turn_context.provider.info().stream_max_retries();
     let mut retries = 0;
     let mut initial_input = Some(input);
     let mut original_input = None;
@@ -2010,19 +2020,6 @@ async fn try_run_sampling_request(
 
         let event = match event {
             Some(Ok(event)) => event,
-            Some(Err(CodexErr::UsageLimitReached(err))) => {
-                let rate_limits = err.rate_limits.clone();
-                if let Some(rate_limits) = rate_limits {
-                    sess.update_rate_limits(&turn_context, *rate_limits).await;
-                }
-                if let Some(retry_err) = client_session
-                    .advance_auth_rotation_after_usage_limit()
-                    .await?
-                {
-                    break Err(retry_err);
-                }
-                break Err(CodexErr::UsageLimitReached(err));
-            }
             Some(Err(err)) => break Err(err),
             None => {
                 break Err(CodexErr::Stream(

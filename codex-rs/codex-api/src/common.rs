@@ -232,7 +232,7 @@ impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ResponseCreateWsRequest {
     pub model: String,
     #[serde(skip_serializing_if = "String::is_empty")]

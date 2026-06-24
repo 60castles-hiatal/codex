@@ -77,7 +77,7 @@ impl InternalModelContextFragment {
 
 impl ContextualUserFragment for InternalModelContextFragment {
     fn role(&self) -> &'static str {
-        "developer"
+        "user"
     }
 
     fn markers(&self) -> (&'static str, &'static str) {
