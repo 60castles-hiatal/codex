@@ -1952,6 +1952,10 @@ impl AuthManager {
         })
     }
 
+    pub fn chatgpt_base_url(&self) -> Option<String> {
+        self.chatgpt_base_url.clone()
+    }
+
     /// Current cached auth (clone) without attempting a refresh.
     pub fn auth_cached(&self) -> Option<CodexAuth> {
         self.inner.read().ok().and_then(|c| c.auth.clone())

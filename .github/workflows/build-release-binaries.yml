@@ -1,0 +1,181 @@
+name: build-release-binaries
+
+on:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Git tag to build and upload assets for.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Git tag to build and upload assets for.
+        required: true
+        type: string
+        default: rust-v0.142.0-60castles.1
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        working-directory: codex-rs
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RUSTC_WRAPPER: sccache
+      SCCACHE_CACHE_SIZE: "10G"
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache/${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            binaries: codex codex-responses-api-proxy codex-app-server bwrap
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            binaries: codex codex-responses-api-proxy codex-app-server bwrap
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils sccache zstd
+
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Use hermetic Cargo home
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_home="${GITHUB_WORKSPACE}/.cargo-home"
+          mkdir -p "${cargo_home}/bin"
+          echo "CARGO_HOME=${cargo_home}" >> "$GITHUB_ENV"
+          echo "${cargo_home}/bin" >> "$GITHUB_PATH"
+          : > "${cargo_home}/config.toml"
+
+      - name: Restore sccache cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-${{ runner.os }}-${{ matrix.target }}-rust-1.95.0-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ matrix.target }}-rust-1.95.0-${{ hashFiles('codex-rs/Cargo.lock') }}-
+            sccache-${{ runner.os }}-${{ matrix.target }}-rust-1.95.0-
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.14.0
+          use-cache: false
+
+      - name: Install musl build tools
+        env:
+          TARGET: ${{ matrix.target }}
+        run: bash "${GITHUB_WORKSPACE}/.github/scripts/install-musl-build-tools.sh"
+
+      - name: Disable aws-lc jitter entropy
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "AWS_LC_SYS_NO_JITTER_ENTROPY=1" >> "$GITHUB_ENV"
+          target_no_jitter="AWS_LC_SYS_NO_JITTER_ENTROPY_${{ matrix.target }}"
+          target_no_jitter="${target_no_jitter//-/_}"
+          echo "${target_no_jitter}=1" >> "$GITHUB_ENV"
+
+      - name: Configure rusty_v8 artifact overrides
+        uses: ./.github/actions/setup-rusty-v8
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Cargo build
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          heartbeat() {
+            while true; do
+              sleep 60
+              echo "Still building ${target} at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+            done
+          }
+          heartbeat &
+          heartbeat_pid="$!"
+          trap 'status=$?; kill "${heartbeat_pid}" 2>/dev/null || true; sccache --show-stats || true; if [[ "${status}" -ne 0 ]]; then free -h || true; df -h "$GITHUB_WORKSPACE" || true; ps -eo pid,ppid,pcpu,pmem,rss,vsz,comm --sort=-rss | head -20 || true; fi; exit "${status}"' EXIT
+
+          mkdir -p "$SCCACHE_DIR"
+          sccache --start-server
+          sccache --zero-stats || true
+
+          binary_args=()
+          for binary in ${{ matrix.binaries }}; do
+            binary_args+=(--bin "$binary")
+          done
+          echo "::group::Build release binaries for ${target}"
+          cargo build --target "${target}" --release "${binary_args[@]}"
+          echo "::endgroup::"
+
+      - name: Stage binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          dest="${GITHUB_WORKSPACE}/dist/${target}"
+          mkdir -p "$dest"
+
+          for binary in ${{ matrix.binaries }}; do
+            cp "target/${target}/release/${binary}" "$dest/${binary}-${target}"
+          done
+
+          staged_binaries=()
+          for binary in ${{ matrix.binaries }}; do
+            staged_binaries+=("${binary}-${target}")
+          done
+
+          bash "${GITHUB_WORKSPACE}/.github/scripts/archive-release-symbols-and-strip-binaries.sh" \
+            --target "$target" \
+            --artifact-name "$target" \
+            --release-dir "$dest" \
+            --archive-dir "$dest" \
+            --binaries "${staged_binaries[*]}"
+
+          bundle_root="${RUNNER_TEMP}/codex-${target}-bundle"
+          rm -rf "$bundle_root"
+          mkdir -p "$bundle_root/codex-resources"
+          cp "$dest/codex-${target}" "$bundle_root/codex"
+          cp "$dest/bwrap-${target}" "$bundle_root/codex-resources/bwrap"
+          chmod 0755 "$bundle_root/codex" "$bundle_root/codex-resources/bwrap"
+          tar -C "$bundle_root" -cf - codex codex-resources/bwrap |
+            zstd -T0 -19 -o "$dest/codex-${target}-bundle.tar.zst"
+
+          for f in "$dest"/*; do
+            base="$(basename "$f")"
+            if [[ "$base" == *.tar.gz || "$base" == *.tar.zst || "$base" == *.zip ]]; then
+              continue
+            fi
+            tar -C "$dest" -czf "$dest/${base}.tar.gz" "$base"
+            zstd -T0 -19 --rm "$dest/$base"
+          done
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" "${GITHUB_WORKSPACE}/dist/${{ matrix.target }}"/* --clobber --repo "$GITHUB_REPOSITORY"
