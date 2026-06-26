@@ -2045,6 +2045,7 @@ async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401()
             vec![json!({
                 "account_index": 0,
                 "generation": 0,
+                "refresh": true,
             })]
         );
     }

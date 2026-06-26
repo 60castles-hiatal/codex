@@ -75,6 +75,7 @@ struct AuthRotationAdvanceRequest {
 struct AuthRotationAccountAuthRequest {
     account_index: usize,
     generation: u64,
+    refresh: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +155,7 @@ impl AuthRotation {
             .json(&AuthRotationAccountAuthRequest {
                 account_index,
                 generation,
+                refresh: true,
             })
             .send()
             .await
