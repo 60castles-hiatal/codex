@@ -162,6 +162,28 @@ fn map_api_error_maps_usage_limit_limit_name_header() {
 }
 
 #[test]
+fn map_api_error_maps_usage_limit_code_alias() {
+    let body = serde_json::json!({
+        "error": {
+            "code": "usage_limit_reached",
+            "plan_type": "team",
+        }
+    })
+    .to_string();
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::TOO_MANY_REQUESTS,
+        url: Some("http://example.com/v1/responses".to_string()),
+        headers: None,
+        body: Some(body),
+    }));
+
+    let CodexErr::UsageLimitReached(usage_limit) = err else {
+        panic!("expected CodexErr::UsageLimitReached, got {err:?}");
+    };
+    assert!(usage_limit.rate_limits.is_none());
+}
+
+#[test]
 fn map_api_error_does_not_fallback_limit_name_to_limit_id() {
     let mut headers = HeaderMap::new();
     headers.insert(

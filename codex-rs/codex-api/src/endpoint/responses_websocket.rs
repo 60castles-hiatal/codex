@@ -539,6 +539,8 @@ fn map_ws_error(err: WsError, url: &Url) -> ApiError {
 
 #[derive(Debug, Deserialize)]
 struct WrappedWebsocketError {
+    #[serde(rename = "type")]
+    error_type: Option<String>,
     code: Option<String>,
     message: Option<String>,
 }
@@ -587,7 +589,19 @@ fn map_wrapped_websocket_error_event(
         });
     }
 
-    let status = StatusCode::from_u16(status?).ok()?;
+    let status = match status {
+        Some(status) => StatusCode::from_u16(status).ok()?,
+        None if error.as_ref().is_some_and(|error| {
+            matches!(
+                error.error_type.as_deref().or(error.code.as_deref()),
+                Some("usage_limit_reached" | "usage_not_included")
+            )
+        }) =>
+        {
+            StatusCode::TOO_MANY_REQUESTS
+        }
+        None => return None,
+    };
     if status.is_success() {
         return None;
     }
@@ -979,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_wrapped_websocket_error_event_without_status_is_not_mapped() {
+    fn parse_wrapped_websocket_usage_limit_without_status_maps_to_too_many_requests() {
         let payload = json!({
             "type": "error",
             "error": {
@@ -989,6 +1003,29 @@ mod tests {
             "headers": {
                 "x-codex-primary-used-percent": "100.0",
                 "x-codex-primary-window-minutes": 15
+            }
+        })
+        .to_string();
+
+        let wrapped_error = parse_wrapped_websocket_error_event(&payload)
+            .expect("expected websocket error payload to be parsed");
+        let api_error = map_wrapped_websocket_error_event(wrapped_error, payload)
+            .expect("expected usage-limit websocket error to map to ApiError");
+        let ApiError::Transport(TransportError::Http { status, body, .. }) = api_error else {
+            panic!("expected ApiError::Transport(Http)");
+        };
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        let body = body.expect("expected body");
+        assert!(body.contains("usage_limit_reached"));
+    }
+
+    #[test]
+    fn parse_wrapped_websocket_non_usage_error_without_status_is_not_mapped() {
+        let payload = json!({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Model does not support image inputs"
             }
         })
         .to_string();

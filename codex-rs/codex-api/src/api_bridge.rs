@@ -187,7 +187,7 @@ struct UsageErrorResponse {
 
 #[derive(Debug, Deserialize)]
 struct UsageErrorBody {
-    #[serde(rename = "type")]
+    #[serde(rename = "type", alias = "code")]
     error_type: Option<String>,
     plan_type: Option<PlanType>,
     resets_at: Option<i64>,
