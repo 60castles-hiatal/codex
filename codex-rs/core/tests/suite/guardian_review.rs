@@ -69,15 +69,21 @@ async fn guardian_session_prewarms_and_is_reused_for_first_review() -> Result<()
     })
     .await?;
     let prewarm_requests = [first.body_json(), second.body_json()];
-    let guardian_prewarm = prewarm_requests
+    for request in &prewarm_requests {
+        assert!(request.get("client_metadata").is_none());
+    }
+    let handshakes = server.handshakes();
+    let guardian_prewarm_handshake = handshakes
         .iter()
-        .find(|request| {
-            request["client_metadata"]["x-openai-subagent"].as_str() == Some("guardian")
-        })
-        .expect("guardian startup prewarm request");
-    assert_eq!(guardian_prewarm["generate"].as_bool(), Some(false));
-    let guardian_thread_id = guardian_prewarm["client_metadata"]["thread_id"]
-        .as_str()
+        .find(|handshake| handshake.header("x-openai-subagent").as_deref() == Some("guardian"))
+        .expect("guardian startup prewarm handshake");
+    assert!(
+        prewarm_requests
+            .iter()
+            .any(|request| request["generate"].as_bool() == Some(false))
+    );
+    let guardian_thread_id = guardian_prewarm_handshake
+        .header("thread-id")
         .expect("guardian thread id");
 
     test.codex
@@ -95,14 +101,19 @@ async fn guardian_session_prewarms_and_is_reused_for_first_review() -> Result<()
     )
     .await?
     .body_json();
+    let review_handshakes = server.handshakes();
+    let guardian_review_handshake = review_handshakes.get(3).expect("guardian review handshake");
     assert_eq!(
-        guardian_review["client_metadata"]["x-openai-subagent"].as_str(),
-        Some("guardian")
+        guardian_review_handshake
+            .header("x-openai-subagent")
+            .as_deref(),
+        Some("guardian"),
     );
     assert_eq!(
-        guardian_review["client_metadata"]["thread_id"].as_str(),
-        Some(guardian_thread_id)
+        guardian_review_handshake.header("thread-id").as_deref(),
+        Some(guardian_thread_id.as_str()),
     );
+    assert!(guardian_review.get("client_metadata").is_none());
     assert_eq!(guardian_review.get("generate"), None);
 
     test.codex.shutdown_and_wait().await?;

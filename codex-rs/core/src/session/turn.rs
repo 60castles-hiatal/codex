@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use crate::SkillInjections;
 use crate::build_skill_injections;
@@ -67,6 +68,8 @@ use crate::tools::spec_plan::tool_suggest_enabled;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::turn_timing::record_turn_ttft_metric;
 use crate::util::error_or_panic;
+use chrono::DateTime;
+use chrono::Utc;
 use codex_analytics::AppInvocation;
 use codex_analytics::CompactionPhase;
 use codex_analytics::CompactionReason;
@@ -1113,6 +1116,82 @@ pub(crate) fn build_prompt(
     }
 }
 
+struct UsageLimitRotationTracker {
+    account_count: Option<usize>,
+    limited_accounts: HashSet<usize>,
+    earliest_reset: Option<DateTime<Utc>>,
+}
+
+impl UsageLimitRotationTracker {
+    fn new(account_count: Option<usize>) -> Self {
+        Self {
+            account_count,
+            limited_accounts: HashSet::new(),
+            earliest_reset: None,
+        }
+    }
+
+    fn record_limited_account(
+        &mut self,
+        account_index: usize,
+        resets_at: Option<DateTime<Utc>>,
+    ) -> bool {
+        let repeated_account = !self.limited_accounts.insert(account_index);
+
+        if let Some(resets_at) = resets_at
+            && resets_at > Utc::now()
+            && self
+                .earliest_reset
+                .as_ref()
+                .is_none_or(|earliest_reset| resets_at < *earliest_reset)
+        {
+            self.earliest_reset = Some(resets_at);
+        }
+
+        repeated_account
+            || self
+                .account_count
+                .is_some_and(|account_count| self.limited_accounts.len() >= account_count)
+    }
+
+    fn earliest_reset(&self) -> Option<DateTime<Utc>> {
+        self.earliest_reset.as_ref().cloned()
+    }
+
+    fn reset_after_wait(&mut self) {
+        self.limited_accounts.clear();
+        self.earliest_reset = None;
+    }
+}
+
+async fn wait_for_rotation_usage_limit_reset(
+    sess: &Session,
+    turn_context: &TurnContext,
+    resets_at: DateTime<Utc>,
+    cancellation_token: &CancellationToken,
+) -> CodexResult<()> {
+    let wait_for = (resets_at - Utc::now()).to_std().unwrap_or(Duration::ZERO);
+    if wait_for.is_zero() {
+        return Ok(());
+    }
+
+    sess.send_event(
+        turn_context,
+        EventMsg::Warning(WarningEvent {
+            message: format!(
+                "All auth rotation accounts are usage limited. Waiting until {} before retrying.",
+                resets_at.format("%Y-%m-%d %H:%M:%S UTC")
+            ),
+        }),
+    )
+    .await;
+
+    tokio::time::sleep(wait_for)
+        .or_cancel(cancellation_token)
+        .await?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 #[allow(deprecated)]
 #[instrument(level = "trace",
@@ -1160,6 +1239,8 @@ async fn run_sampling_request(
         })
         .unwrap_or_else(|| turn_context.provider.info().stream_max_retries());
     let mut retries = 0;
+    let mut usage_limit_rotation =
+        UsageLimitRotationTracker::new(client_session.auth_rotation_account_count());
     let mut initial_input = Some(input);
     let mut original_input = None;
     loop {
@@ -1201,7 +1282,39 @@ async fn run_sampling_request(
                 if let Some(rate_limits) = rate_limits {
                     sess.update_rate_limits(&turn_context, *rate_limits).await;
                 }
-                return Err(CodexErr::UsageLimitReached(e));
+                let Some(account_index) = client_session.auth_rotation_current_account_index()
+                else {
+                    return Err(CodexErr::UsageLimitReached(e));
+                };
+                let full_rotation =
+                    usage_limit_rotation.record_limited_account(account_index, e.resets_at);
+                if full_rotation && usage_limit_rotation.earliest_reset().is_none() {
+                    return Err(CodexErr::UsageLimitReached(e));
+                }
+
+                let (advanced, err) = match client_session
+                    .advance_auth_rotation_after_usage_limit()
+                    .await
+                {
+                    Ok(Some(err)) => (true, err),
+                    Ok(None) => return Err(CodexErr::UsageLimitReached(e)),
+                    Err(err) => (false, err),
+                };
+
+                if advanced
+                    && full_rotation
+                    && let Some(resets_at) = usage_limit_rotation.earliest_reset()
+                {
+                    wait_for_rotation_usage_limit_reset(
+                        &sess,
+                        &turn_context,
+                        resets_at,
+                        &cancellation_token,
+                    )
+                    .await?;
+                    usage_limit_rotation.reset_after_wait();
+                }
+                err
             }
             Err(err) => err,
         };
@@ -2029,19 +2142,6 @@ async fn try_run_sampling_request(
 
         let event = match event {
             Some(Ok(event)) => event,
-            Some(Err(CodexErr::UsageLimitReached(err))) => {
-                let rate_limits = err.rate_limits.clone();
-                if let Some(rate_limits) = rate_limits {
-                    sess.update_rate_limits(&turn_context, *rate_limits).await;
-                }
-                if let Some(retry_err) = client_session
-                    .advance_auth_rotation_after_usage_limit()
-                    .await?
-                {
-                    break Err(retry_err);
-                }
-                break Err(CodexErr::UsageLimitReached(err));
-            }
             Some(Err(err)) => break Err(err),
             None => {
                 break Err(CodexErr::Stream(

@@ -2,7 +2,6 @@ use super::AuthRequestTelemetryContext;
 use super::ModelClient;
 use super::PendingUnauthorizedRetry;
 use super::UnauthorizedRecoveryExecution;
-use super::X_CODEX_INSTALLATION_ID_HEADER;
 use super::X_CODEX_PARENT_THREAD_ID_HEADER;
 use super::X_CODEX_TURN_METADATA_HEADER;
 use super::X_CODEX_WINDOW_ID_HEADER;
@@ -294,7 +293,7 @@ fn build_subagent_headers_sets_internal_memory_consolidation_label() {
 }
 
 #[test]
-fn build_ws_client_metadata_includes_window_lineage_and_turn_metadata() {
+fn build_responses_compatibility_headers_include_window_lineage_and_turn_metadata() {
     let parent_thread_id = ThreadId::new();
     let client = test_model_client(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
         parent_thread_id,
@@ -313,45 +312,42 @@ fn build_ws_client_metadata_includes_window_lineage_and_turn_metadata() {
         Some(parent_thread_id),
         TestCodexResponsesRequestKind::Turn,
     );
-    let client_metadata =
-        client.build_ws_client_metadata(&responses_metadata, /*use_responses_lite*/ false);
+    let headers = client.build_responses_compatibility_headers(&responses_metadata);
     let parent_thread_id = parent_thread_id.to_string();
     let turn_metadata: serde_json::Value = serde_json::from_str(
-        client_metadata
+        headers
             .get(X_CODEX_TURN_METADATA_HEADER)
-            .expect("turn metadata"),
+            .expect("turn metadata")
+            .to_str()
+            .expect("turn metadata header value"),
     )
     .expect("valid turn metadata");
-    for (client_key, metadata_key, expected) in [
-        (
-            X_CODEX_INSTALLATION_ID_HEADER,
-            "installation_id",
-            "11111111-1111-4111-8111-111111111111",
-        ),
-        ("session_id", "session_id", thread_id.as_str()),
-        ("thread_id", "thread_id", thread_id.as_str()),
-        ("turn_id", "turn_id", "turn-123"),
-        (
-            X_CODEX_WINDOW_ID_HEADER,
-            "window_id",
-            expected_window_id.as_str(),
-        ),
-        (
-            X_CODEX_PARENT_THREAD_ID_HEADER,
-            "parent_thread_id",
-            parent_thread_id.as_str(),
-        ),
+    for (metadata_key, expected) in [
+        ("installation_id", "11111111-1111-4111-8111-111111111111"),
+        ("session_id", thread_id.as_str()),
+        ("thread_id", thread_id.as_str()),
+        ("turn_id", "turn-123"),
+        ("window_id", expected_window_id.as_str()),
+        ("parent_thread_id", parent_thread_id.as_str()),
     ] {
-        assert_eq!(
-            client_metadata.get(client_key).map(String::as_str),
-            Some(expected)
-        );
         assert_eq!(turn_metadata[metadata_key].as_str(), Some(expected));
     }
     assert_eq!(
-        client_metadata
+        headers
+            .get(X_CODEX_WINDOW_ID_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(expected_window_id.as_str())
+    );
+    assert_eq!(
+        headers
+            .get(X_CODEX_PARENT_THREAD_ID_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        Some(parent_thread_id.as_str())
+    );
+    assert_eq!(
+        headers
             .get(X_OPENAI_SUBAGENT_HEADER)
-            .map(String::as_str),
+            .and_then(|value| value.to_str().ok()),
         Some("collab_spawn")
     );
 }

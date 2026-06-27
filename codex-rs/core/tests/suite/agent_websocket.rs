@@ -21,18 +21,18 @@ async fn websocket_test_codex_shell_chain() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let call_id = "shell-command-call";
-    let server = start_websocket_server(vec![vec![
-        vec![
+    let server = start_websocket_server(vec![
+        vec![vec![
             ev_response_created("resp-1"),
             ev_shell_command_call(call_id, "echo websocket"),
             ev_completed("resp-1"),
-        ],
-        vec![
+        ]],
+        vec![vec![
             ev_response_created("resp-2"),
             ev_assistant_message("msg-1", "done"),
             ev_completed("resp-2"),
-        ],
-    ]])
+        ]],
+    ])
     .await;
 
     let mut builder = test_codex().with_windows_cmd_shell();
@@ -41,15 +41,15 @@ async fn websocket_test_codex_shell_chain() -> Result<()> {
     test.submit_turn_with_policy("run the echo command", test.config.legacy_sandbox_policy())
         .await?;
 
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 2);
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
 
-    let first_turn = connection
+    let first_turn = connections[0]
         .first()
         .expect("missing first turn request")
         .body_json();
-    let second_turn = connection
-        .get(1)
+    let second_turn = connections[1]
+        .first()
         .expect("missing second turn request")
         .body_json();
 
@@ -70,14 +70,14 @@ async fn websocket_test_codex_shell_chain() -> Result<()> {
 async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server(vec![vec![
-        vec![ev_response_created("warm-1"), ev_completed("warm-1")],
-        vec![
+    let server = start_websocket_server(vec![
+        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
+        vec![vec![
             ev_response_created("resp-1"),
             ev_assistant_message("msg-1", "hello"),
             ev_completed("resp-1"),
-        ],
-    ]])
+        ]],
+    ])
     .await;
 
     let mut builder = test_codex();
@@ -85,25 +85,32 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
     test.submit_turn_with_policy("hello", test.config.legacy_sandbox_policy())
         .await?;
 
-    assert_eq!(server.handshakes().len(), 1);
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 2);
-    let warmup = connection
+    assert_eq!(server.handshakes().len(), 2);
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    let warmup = connections[0]
         .first()
         .expect("missing warmup request")
         .body_json();
-    let turn = connection.get(1).expect("missing turn request").body_json();
+    let turn = connections[1]
+        .first()
+        .expect("missing turn request")
+        .body_json();
     assert_eq!(warmup["type"].as_str(), Some("response.create"));
     assert_eq!(warmup["generate"].as_bool(), Some(false));
+    assert!(warmup.get("client_metadata").is_none());
+    assert!(turn.get("client_metadata").is_none());
+    let handshakes = server.handshakes();
+    let handshake = &handshakes[0];
     let warmup_metadata: Value = serde_json::from_str(
-        warmup["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
+        &handshake
+            .header("x-codex-turn-metadata")
             .expect("warmup turn metadata"),
     )?;
     assert_eq!(warmup_metadata["request_kind"].as_str(), Some("prewarm"));
     assert_eq!(
         warmup_metadata["window_id"].as_str(),
-        warmup["client_metadata"]["x-codex-window-id"].as_str()
+        handshake.header("x-codex-window-id").as_deref()
     );
     assert!(
         turn["tools"]
@@ -112,12 +119,6 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
         "expected request tools to be populated"
     );
     assert_eq!(turn["type"].as_str(), Some("response.create"));
-    let turn_metadata: Value = serde_json::from_str(
-        turn["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
-            .expect("turn metadata"),
-    )?;
-    assert_eq!(turn_metadata["request_kind"].as_str(), Some("turn"));
 
     server.shutdown().await;
     Ok(())
@@ -127,20 +128,25 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
 async fn websocket_first_turn_handles_handshake_delay_with_startup_prewarm() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
-        requests: vec![
-            vec![ev_response_created("warm-1"), ev_completed("warm-1")],
-            vec![
+    let server = start_websocket_server_with_headers(vec![
+        WebSocketConnectionConfig {
+            requests: vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
+            response_headers: Vec::new(),
+            // Delay handshake so turn processing must tolerate websocket startup latency.
+            accept_delay: Some(Duration::from_millis(150)),
+            close_after_requests: true,
+        },
+        WebSocketConnectionConfig {
+            requests: vec![vec![
                 ev_response_created("resp-1"),
                 ev_assistant_message("msg-1", "hello"),
                 ev_completed("resp-1"),
-            ],
-        ],
-        response_headers: Vec::new(),
-        // Delay handshake so turn processing must tolerate websocket startup latency.
-        accept_delay: Some(Duration::from_millis(150)),
-        close_after_requests: true,
-    }])
+            ]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        },
+    ])
     .await;
 
     let mut builder = test_codex();
@@ -148,14 +154,17 @@ async fn websocket_first_turn_handles_handshake_delay_with_startup_prewarm() -> 
     test.submit_turn_with_policy("hello", test.config.legacy_sandbox_policy())
         .await?;
 
-    assert_eq!(server.handshakes().len(), 1);
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 2);
-    let warmup = connection
+    assert_eq!(server.handshakes().len(), 2);
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    let warmup = connections[0]
         .first()
         .expect("missing warmup request")
         .body_json();
-    let turn = connection.get(1).expect("missing turn request").body_json();
+    let turn = connections[1]
+        .first()
+        .expect("missing turn request")
+        .body_json();
     assert_eq!(warmup["type"].as_str(), Some("response.create"));
     assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert!(
@@ -175,19 +184,19 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let call_id = "shell-command-call";
-    let server = start_websocket_server(vec![vec![
-        vec![ev_response_created("warm-1"), ev_completed("warm-1")],
-        vec![
+    let server = start_websocket_server(vec![
+        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
+        vec![vec![
             ev_response_created("resp-1"),
             ev_shell_command_call(call_id, "echo websocket"),
             ev_completed("resp-1"),
-        ],
-        vec![
+        ]],
+        vec![vec![
             ev_response_created("resp-2"),
             ev_assistant_message("msg-1", "done"),
             ev_completed("resp-2"),
-        ],
-    ]])
+        ]],
+    ])
     .await;
 
     let mut builder = test_codex().with_windows_cmd_shell().with_config(|config| {
@@ -201,26 +210,26 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
     test.submit_turn_with_policy("run the echo command", test.config.legacy_sandbox_policy())
         .await?;
 
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 3);
+    let connections = server.connections();
+    assert_eq!(connections.len(), 3);
 
-    let warmup = connection
+    let warmup = connections[0]
         .first()
         .expect("missing warmup request")
         .body_json();
-    let first_turn = connection
-        .get(1)
+    let first_turn = connections[1]
+        .first()
         .expect("missing first turn request")
         .body_json();
-    let second_turn = connection
-        .get(2)
+    let second_turn = connections[2]
+        .first()
         .expect("missing second turn request")
         .body_json();
 
     assert_eq!(warmup["type"].as_str(), Some("response.create"));
     assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
-    assert_eq!(first_turn["previous_response_id"].as_str(), Some("warm-1"));
+    assert_eq!(first_turn.get("previous_response_id"), None);
     assert!(
         first_turn
             .get("input")
@@ -228,7 +237,7 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
             .is_some_and(|items| !items.is_empty())
     );
     assert_eq!(second_turn["type"].as_str(), Some("response.create"));
-    assert_eq!(second_turn["previous_response_id"].as_str(), Some("resp-1"));
+    assert_eq!(second_turn.get("previous_response_id"), None);
 
     let create_items = second_turn
         .get("input")
@@ -245,7 +254,8 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
         Some(call_id)
     );
 
-    let handshake = server.single_handshake();
+    let handshakes = server.handshakes();
+    let handshake = &handshakes[0];
     assert_eq!(
         handshake.header("openai-beta"),
         Some(WS_V2_BETA_HEADER_VALUE.to_string())
@@ -259,14 +269,14 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
 async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server(vec![vec![
-        vec![ev_response_created("warm-1"), ev_completed("warm-1")],
-        vec![
+    let server = start_websocket_server(vec![
+        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
+        vec![vec![
             ev_response_created("resp-1"),
             ev_assistant_message("msg-1", "fast"),
             ev_completed("resp-1"),
-        ],
-    ]])
+        ]],
+    ])
     .await;
 
     let mut builder = test_codex().with_config(|config| {
@@ -288,11 +298,11 @@ async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() 
     test.submit_turn_with_service_tier("hello", Some(ServiceTier::Fast.request_value()))
         .await?;
 
-    assert_eq!(server.handshakes().len(), 1);
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 2);
-    let first_turn = connection
-        .get(1)
+    assert_eq!(server.handshakes().len(), 2);
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    let first_turn = connections[1]
+        .first()
         .expect("missing first turn request")
         .body_json();
 
@@ -314,14 +324,14 @@ async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() 
 async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server(vec![vec![
-        vec![ev_response_created("warm-1"), ev_completed("warm-1")],
-        vec![
+    let server = start_websocket_server(vec![
+        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
+        vec![vec![
             ev_response_created("resp-1"),
             ev_assistant_message("msg-1", "standard"),
             ev_completed("resp-1"),
-        ],
-    ]])
+        ]],
+    ])
     .await;
 
     let mut builder = test_codex().with_config(|config| {
@@ -344,11 +354,11 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
     test.submit_turn_with_service_tier("hello", /*service_tier*/ None)
         .await?;
 
-    assert_eq!(server.handshakes().len(), 1);
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 2);
-    let first_turn = connection
-        .get(1)
+    assert_eq!(server.handshakes().len(), 2);
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    let first_turn = connections[1]
+        .first()
         .expect("missing first turn request")
         .body_json();
 
@@ -370,19 +380,19 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
 async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server(vec![vec![
-        vec![ev_response_created("warm-1"), ev_completed("warm-1")],
-        vec![
+    let server = start_websocket_server(vec![
+        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
+        vec![vec![
             ev_response_created("resp-1"),
             ev_assistant_message("msg-1", "fast"),
             ev_completed("resp-1"),
-        ],
-        vec![
+        ]],
+        vec![vec![
             ev_response_created("resp-2"),
             ev_assistant_message("msg-2", "standard"),
             ev_completed("resp-2"),
-        ],
-    ]])
+        ]],
+    ])
     .await;
 
     let mut builder = test_codex().with_config(|config| {
@@ -406,16 +416,16 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
     test.submit_turn_with_service_tier("second", /*service_tier*/ None)
         .await?;
 
-    assert_eq!(server.handshakes().len(), 1);
-    let connection = server.single_connection();
-    assert_eq!(connection.len(), 3);
+    assert_eq!(server.handshakes().len(), 3);
+    let connections = server.connections();
+    assert_eq!(connections.len(), 3);
 
-    let first_turn = connection
-        .get(1)
+    let first_turn = connections[1]
+        .first()
         .expect("missing first turn request")
         .body_json();
-    let second_turn = connection
-        .get(2)
+    let second_turn = connections[2]
+        .first()
         .expect("missing second turn request")
         .body_json();
 

@@ -24,7 +24,6 @@
 //! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
 //! fails, normal stream retry/fallback logic handles recovery on the same turn.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
@@ -61,7 +60,6 @@ use codex_api::WebsocketTelemetry;
 use codex_api::auth_header_telemetry;
 use codex_api::build_session_headers;
 use codex_api::create_text_param_for_request;
-use codex_api::response_create_client_metadata;
 use codex_app_server_protocol::AuthMode;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -69,7 +67,6 @@ use codex_login::RefreshTokenError;
 use codex_login::UnauthorizedRecovery;
 use codex_login::default_client::build_reqwest_client;
 use codex_otel::SessionTelemetry;
-use codex_otel::current_span_w3c_trace_context;
 
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -79,7 +76,6 @@ use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::W3cTraceContext;
 use codex_rollout_trace::CompactionTraceContext;
 use codex_rollout_trace::InferenceTraceAttempt;
 use codex_rollout_trace::InferenceTraceContext;
@@ -143,10 +139,6 @@ pub const X_OPENAI_MEMGEN_REQUEST_HEADER: &str = "x-openai-memgen-request";
 pub const X_OPENAI_SUBAGENT_HEADER: &str = "x-openai-subagent";
 pub const X_RESPONSESAPI_INCLUDE_TIMING_METRICS_HEADER: &str =
     "x-responsesapi-include-timing-metrics";
-const X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY: &str =
-    "x-codex-ws-stream-request-start-ms";
-const WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY: &str =
-    "ws_request_header_x_openai_internal_codex_responses_lite";
 const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const X_OPENAI_INTERNAL_CODEX_RESPONSES_LITE_HEADER: &str =
     "x-openai-internal-codex-responses-lite";
@@ -564,7 +556,6 @@ impl ModelClient {
             settings.effort,
             settings.summary,
             settings.service_tier,
-            responses_metadata,
         )?;
         let ResponsesApiRequest {
             model,
@@ -744,21 +735,6 @@ impl ModelClient {
         extra_headers
     }
 
-    fn build_ws_client_metadata(
-        &self,
-        responses_metadata: &CodexResponsesMetadata,
-        use_responses_lite: bool,
-    ) -> HashMap<String, String> {
-        let mut client_metadata = responses_metadata.client_metadata();
-        if use_responses_lite {
-            client_metadata.insert(
-                WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY.to_string(),
-                "true".to_string(),
-            );
-        }
-        client_metadata
-    }
-
     async fn generate_attestation_header_for(&self) -> Option<HeaderValue> {
         if !self.state.include_attestation {
             return None;
@@ -823,7 +799,6 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<String>,
-        responses_metadata: &CodexResponsesMetadata,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let mut input = prompt.get_formatted_input_for_request(model_info.use_responses_lite);
@@ -871,7 +846,7 @@ impl ModelClient {
             service_tier,
             prompt_cache_key,
             text,
-            client_metadata: Some(responses_metadata.client_metadata()),
+            client_metadata: None,
         };
         Ok(request)
     }
@@ -1124,6 +1099,13 @@ impl ModelClientSession {
             .map(|rotation| rotation.account_count())
     }
 
+    pub(crate) fn auth_rotation_current_account_index(&self) -> Option<usize> {
+        self.websocket_session
+            .connection
+            .as_ref()
+            .and_then(|slot| slot.account_index)
+    }
+
     pub(crate) async fn advance_auth_rotation_after_usage_limit(
         &mut self,
     ) -> Result<Option<CodexErr>> {
@@ -1171,13 +1153,17 @@ impl ModelClientSession {
 
     fn reset_websocket_session(&mut self) {
         self.websocket_session.connection = None;
+        self.clear_websocket_response_state();
+        self.websocket_session
+            .set_connection_reused(/*connection_reused*/ false);
+    }
+
+    fn clear_websocket_response_state(&mut self) {
         self.websocket_session.last_request = None;
         self.websocket_session.last_response_rx = None;
         self.websocket_session.last_response_account_index = None;
         self.websocket_session.last_response_rotation_generation = None;
         self.websocket_session.last_response_from_untraced_warmup = false;
-        self.websocket_session
-            .set_connection_reused(/*connection_reused*/ false);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1417,11 +1403,7 @@ impl ModelClientSession {
         };
 
         if needs_new {
-            self.websocket_session.last_request = None;
-            self.websocket_session.last_response_rx = None;
-            self.websocket_session.last_response_account_index = None;
-            self.websocket_session.last_response_rotation_generation = None;
-            self.websocket_session.last_response_from_untraced_warmup = false;
+            self.clear_websocket_response_state();
             let turn_state = self.turn_state_for_new_connection(/*account_index*/ None);
             let new_conn = match self
                 .client
@@ -1477,21 +1459,21 @@ impl ModelClientSession {
         let target_generation = params.rotation_generation.ok_or_else(|| {
             ApiError::Stream("Codex auth rotation request is missing generation".to_string())
         })?;
-        let needs_new = match self.websocket_session.connection.as_ref() {
-            Some(slot) => {
-                slot.connection.is_closed().await
-                    || slot.account_index != Some(target_account_index)
+        let response_state_stale = self
+            .websocket_session
+            .connection
+            .as_ref()
+            .is_some_and(|slot| {
+                slot.account_index != Some(target_account_index)
                     || slot.generation != Some(target_generation)
-            }
+            });
+        let needs_new = match self.websocket_session.connection.as_ref() {
+            Some(slot) => slot.connection.is_closed().await || response_state_stale,
             None => true,
         };
         if needs_new {
             self.websocket_session.connection = None;
-            self.websocket_session.last_request = None;
-            self.websocket_session.last_response_rx = None;
-            self.websocket_session.last_response_account_index = None;
-            self.websocket_session.last_response_rotation_generation = None;
-            self.websocket_session.last_response_from_untraced_warmup = false;
+            self.clear_websocket_response_state();
             let slot = self
                 .connect_rotated_account(
                     &rotation,
@@ -1662,7 +1644,6 @@ impl ModelClientSession {
                 effort.clone(),
                 summary,
                 service_tier.clone(),
-                responses_metadata,
             )?;
             let store = request.store;
             self.client
@@ -1747,7 +1728,6 @@ impl ModelClientSession {
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
         warmup: bool,
-        request_trace: Option<W3cTraceContext>,
         inference_trace: &InferenceTraceContext,
     ) -> Result<WebsocketStreamOutcome> {
         let auth_manager = self.client.state.provider.auth_manager();
@@ -1770,18 +1750,8 @@ impl ModelClientSession {
                 effort.clone(),
                 summary,
                 service_tier.clone(),
-                responses_metadata,
             )?;
-            let client_metadata = self
-                .client
-                .build_ws_client_metadata(responses_metadata, model_info.use_responses_lite);
-            let mut ws_payload = ResponseCreateWsRequest {
-                client_metadata: response_create_client_metadata(
-                    Some(client_metadata),
-                    request_trace.as_ref(),
-                ),
-                ..ResponseCreateWsRequest::from(&request)
-            };
+            let mut ws_payload = ResponseCreateWsRequest::from(&request);
             if warmup {
                 ws_payload.generate = Some(false);
             }
@@ -1890,7 +1860,6 @@ impl ModelClientSession {
             } else {
                 inference_trace.start_attempt()
             };
-            stamp_ws_stream_request_start_ms(&mut ws_request);
             let ResponsesWsRequest::ResponseCreate(ws_payload) = &mut ws_request;
             let store = ws_payload.store;
             self.client
@@ -1912,7 +1881,6 @@ impl ModelClientSession {
                     ))
                 })?;
             let websocket_turn_state = Arc::clone(&websocket_connection.turn_state);
-            insert_ws_turn_state_client_metadata(&mut ws_request, &websocket_turn_state);
             let stream_result = websocket_connection
                 .connection
                 .stream_request(
@@ -2016,7 +1984,6 @@ impl ModelClientSession {
                 service_tier,
                 responses_metadata,
                 /*warmup*/ true,
-                current_span_w3c_trace_context(),
                 &disabled_trace,
             )
             .await
@@ -2064,7 +2031,6 @@ impl ModelClientSession {
         match wire_api {
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
-                    let request_trace = current_span_w3c_trace_context();
                     match self
                         .stream_responses_websocket(
                             prompt,
@@ -2075,7 +2041,6 @@ impl ModelClientSession {
                             service_tier.clone(),
                             responses_metadata,
                             /*warmup*/ false,
-                            request_trace,
                             inference_trace,
                         )
                         .await?
@@ -2119,35 +2084,6 @@ impl ModelClientSession {
         self.websocket_session = WebsocketSession::default();
         activated
     }
-}
-
-/// Stamp a ResponsesWsRequest with the current time.
-///
-/// Meant to be called just before sending the request over the socket, to capture realistic
-/// transport timing.
-fn stamp_ws_stream_request_start_ms(request: &mut ResponsesWsRequest) {
-    let ResponsesWsRequest::ResponseCreate(payload) = request;
-    payload
-        .client_metadata
-        .get_or_insert_with(HashMap::new)
-        .insert(
-            X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY.to_string(),
-            crate::turn_timing::now_unix_timestamp_ms().to_string(),
-        );
-}
-
-fn insert_ws_turn_state_client_metadata(
-    request: &mut ResponsesWsRequest,
-    turn_state: &OnceLock<String>,
-) {
-    let Some(state) = turn_state.get() else {
-        return;
-    };
-    let ResponsesWsRequest::ResponseCreate(payload) = request;
-    payload
-        .client_metadata
-        .get_or_insert_with(HashMap::new)
-        .insert(X_CODEX_TURN_STATE_HEADER.to_string(), state.clone());
 }
 
 /// Builds the extra headers attached to Responses API requests.

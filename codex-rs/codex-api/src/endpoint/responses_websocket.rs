@@ -26,6 +26,7 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tokio_tungstenite::MaybeTlsStream;
@@ -268,13 +269,22 @@ impl ResponsesWebsocketConnection {
                     .await
                 };
 
-                if let Err(err) = result {
-                    // A terminal stream error should reach the caller immediately. Waiting for a
-                    // graceful close handshake here can stall indefinitely and mask the error.
-                    let failed_stream = guard.take();
-                    drop(guard);
-                    drop(failed_stream);
-                    let _ = tx_event.send(Err(err)).await;
+                match result {
+                    Ok(()) => {
+                        // Drop the socket after the completed response has been delivered. The next
+                        // request will reconnect instead of reusing this websocket.
+                        let completed_stream = guard.take();
+                        drop(guard);
+                        drop(completed_stream);
+                    }
+                    Err(err) => {
+                        // A terminal stream error should reach the caller immediately. Waiting for a
+                        // graceful close handshake here can stall indefinitely and mask the error.
+                        let failed_stream = guard.take();
+                        drop(guard);
+                        drop(failed_stream);
+                        let _ = tx_event.send(Err(err)).await;
+                    }
                 }
             }
             .instrument(current_span),
@@ -751,10 +761,20 @@ async fn run_websocket_response_stream(
                 match process_responses_event(event) {
                     Ok(Some(event)) => {
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
-                        let _ = tx_event.send(Ok(event)).await;
                         if is_completed {
+                            match tx_event.try_send(Ok(event)) {
+                                Ok(()) => {}
+                                Err(TrySendError::Full(event)) => {
+                                    let tx_event = tx_event.clone();
+                                    tokio::spawn(async move {
+                                        let _ = tx_event.send(event).await;
+                                    });
+                                }
+                                Err(TrySendError::Closed(_)) => {}
+                            }
                             break;
                         }
+                        let _ = tx_event.send(Ok(event)).await;
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -869,6 +889,7 @@ mod tests {
             serde_json::from_str::<Value>(&request_text).expect("parse websocket request");
 
         assert_eq!(wire_payload, previous_payload);
+        assert!(wire_payload.get("client_metadata").is_none());
     }
 
     #[test]

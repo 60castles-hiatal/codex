@@ -173,14 +173,22 @@ async fn responses_stream_includes_subagent_header_on_review() {
         Some(expected_window_id.as_str())
     );
     assert_eq!(request.header("x-codex-parent-thread-id"), None);
+    let turn_metadata: serde_json::Value = serde_json::from_str(
+        &request
+            .header("x-codex-turn-metadata")
+            .expect("x-codex-turn-metadata header"),
+    )
+    .expect("valid turn metadata");
+    assert_eq!(turn_metadata["x-codex-installation-id"].as_str(), None);
     assert_eq!(
-        request.body_json()["client_metadata"]["x-codex-installation-id"].as_str(),
+        turn_metadata["installation_id"].as_str(),
         Some(TEST_INSTALLATION_ID)
     );
     assert_eq!(
-        request.body_json()["client_metadata"]["x-codex-window-id"].as_str(),
+        turn_metadata["window_id"].as_str(),
         Some(expected_window_id.as_str())
     );
+    assert!(request.body_json().get("client_metadata").is_none());
     assert_eq!(request.header("x-codex-sandbox"), None);
 }
 

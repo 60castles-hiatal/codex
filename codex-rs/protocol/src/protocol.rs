@@ -541,7 +541,7 @@ pub enum Op {
         items: Vec<UserInput>,
         /// Optional JSON Schema used to constrain the final assistant message for this turn.
         final_output_json_schema: Option<Value>,
-        /// Optional turn-scoped Responses API `client_metadata`.
+        /// Optional turn-scoped Responses API metadata.
         responsesapi_client_metadata: Option<HashMap<String, String>>,
         /// Client-supplied context fragments keyed by an opaque source identifier.
         additional_context: BTreeMap<String, AdditionalContextEntry>,

@@ -130,10 +130,8 @@ pub(crate) struct TurnMetadataWorkspace {
 
 /// Caller-owned snapshot of Codex metadata sent to ResponsesAPI.
 ///
-/// The full Codex turn metadata blob is transported canonically as
-/// `client_metadata["x-codex-turn-metadata"]`. Flat `client_metadata` keys and direct HTTP/ws
-/// headers are generated compatibility projections of this snapshot, not separate sources of
-/// truth.
+/// The full Codex turn metadata blob is transported as the `x-codex-turn-metadata` header.
+/// Related flat headers are generated from this snapshot, not separate sources of truth.
 #[derive(Clone, Debug)]
 pub struct CodexResponsesMetadata {
     pub(crate) installation_id: String,
@@ -191,44 +189,9 @@ impl CodexResponsesMetadata {
         serde_json::to_value(self.turn_metadata_payload()).ok()
     }
 
-    pub(crate) fn client_metadata(&self) -> HashMap<String, String> {
-        let mut client_metadata = HashMap::from([
-            (
-                X_CODEX_INSTALLATION_ID_HEADER.to_string(),
-                self.installation_id.clone(),
-            ),
-            (SESSION_ID_KEY.to_string(), self.session_id.clone()),
-            (THREAD_ID_KEY.to_string(), self.thread_id.clone()),
-            (X_CODEX_WINDOW_ID_HEADER.to_string(), self.window_id.clone()),
-        ]);
-        if let Some(turn_id) = &self.turn_id {
-            client_metadata.insert(TURN_ID_KEY.to_string(), turn_id.clone());
-        }
-        if let Some(subagent_header) = &self.subagent_header {
-            client_metadata.insert(
-                X_OPENAI_SUBAGENT_HEADER.to_string(),
-                subagent_header.clone(),
-            );
-        }
-        if let Some(parent_thread_id) = self.parent_thread_id {
-            client_metadata.insert(
-                X_CODEX_PARENT_THREAD_ID_HEADER.to_string(),
-                parent_thread_id.to_string(),
-            );
-        }
-        if self.has_turn_metadata()
-            && let Some(turn_metadata_json) = self.turn_metadata_json()
-        {
-            client_metadata.insert(X_CODEX_TURN_METADATA_HEADER.to_string(), turn_metadata_json);
-        }
-        client_metadata
-    }
-
     pub(crate) fn compatibility_headers(&self) -> ApiHeaderMap {
         let mut headers = ApiHeaderMap::new();
         insert_header(&mut headers, X_CODEX_WINDOW_ID_HEADER, &self.window_id);
-        // Direct x-codex-turn-metadata is compatibility output. New per-request consumers should
-        // prefer client_metadata["x-codex-turn-metadata"], which is rendered from this same object.
         if self.has_turn_metadata()
             && let Some(turn_metadata_json) = self.turn_metadata_json()
         {

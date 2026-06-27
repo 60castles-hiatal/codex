@@ -151,23 +151,18 @@ fn response_message_item_id(request: &ResponsesRequest, role: &str, text: &str) 
         .unwrap_or_else(|| panic!("missing item ID for {role} message {text:?}"))
 }
 
-fn assert_codex_client_metadata(
-    request_body: &serde_json::Value,
+fn assert_codex_request_metadata_headers(
+    request: &ResponsesRequest,
     installation_id: &str,
     session_id: &str,
     thread_id: &str,
 ) {
-    let client_metadata = &request_body["client_metadata"];
-    assert_eq!(
-        client_metadata["x-codex-installation-id"].as_str(),
-        Some(installation_id)
-    );
-    assert_eq!(client_metadata["session_id"].as_str(), Some(session_id));
-    assert_eq!(client_metadata["thread_id"].as_str(), Some(thread_id));
-    let turn_metadata_str = client_metadata["x-codex-turn-metadata"]
-        .as_str()
-        .expect("missing x-codex-turn-metadata client metadata");
-    let turn_metadata = serde_json::from_str::<serde_json::Value>(turn_metadata_str)
+    assert_eq!(request.header("session-id").as_deref(), Some(session_id));
+    assert_eq!(request.header("thread-id").as_deref(), Some(thread_id));
+    let turn_metadata_str = request
+        .header("x-codex-turn-metadata")
+        .expect("missing x-codex-turn-metadata header");
+    let turn_metadata = serde_json::from_str::<serde_json::Value>(&turn_metadata_str)
         .expect("invalid x-codex-turn-metadata json");
     assert_eq!(
         turn_metadata["installation_id"].as_str(),
@@ -175,14 +170,12 @@ fn assert_codex_client_metadata(
     );
     assert_eq!(turn_metadata["session_id"].as_str(), Some(session_id));
     assert_eq!(turn_metadata["thread_id"].as_str(), Some(thread_id));
+    assert!(turn_metadata["turn_id"].as_str().is_some());
     assert_eq!(
-        client_metadata["turn_id"].as_str(),
-        turn_metadata["turn_id"].as_str()
-    );
-    assert_eq!(
-        client_metadata["x-codex-window-id"].as_str(),
+        request.header("x-codex-window-id").as_deref(),
         turn_metadata["window_id"].as_str()
     );
+    assert!(request.body_json().get("client_metadata").is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1050,8 +1043,8 @@ async fn includes_session_id_thread_id_and_model_headers_in_request() {
         request_body["prompt_cache_key"].as_str(),
         Some(thread_id_string.as_str())
     );
-    assert_codex_client_metadata(
-        &request_body,
+    assert_codex_request_metadata_headers(
+        &request,
         installation_id.as_str(),
         session_id_string.as_str(),
         thread_id_string.as_str(),
@@ -1323,8 +1316,8 @@ async fn chatgpt_auth_sends_correct_request() {
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Access Token");
     assert_eq!(request_chatgpt_account_id, "account_id");
-    assert_codex_client_metadata(
-        &request_body,
+    assert_codex_request_metadata_headers(
+        &request,
         installation_id.as_str(),
         session_id_string.as_str(),
         thread_id_string.as_str(),

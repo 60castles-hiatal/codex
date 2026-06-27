@@ -89,12 +89,12 @@ async fn responses_turn_state_persists_within_turn_and_resets_after() -> Result<
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_turn_state_persists_within_turn_and_resets_after() -> Result<()> {
+async fn websocket_turn_state_is_not_sent_as_client_metadata() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
-        requests: vec![
-            vec![
+    let server = start_websocket_server_with_headers(vec![
+        WebSocketConnectionConfig {
+            requests: vec![vec![
                 json!({
                     "type": "response.metadata",
                     "headers": {(TURN_STATE_HEADER): "ts-1"},
@@ -103,41 +103,49 @@ async fn websocket_turn_state_persists_within_turn_and_resets_after() -> Result<
                 ev_reasoning_item("rsn-1", &["thinking"], &[]),
                 ev_shell_command_call("ws-shell-turn-state", "echo websocket"),
                 ev_completed("resp-1"),
-            ],
-            vec![
+            ]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        },
+        WebSocketConnectionConfig {
+            requests: vec![vec![
                 ev_response_created("resp-2"),
                 ev_assistant_message("msg-1", "done"),
                 ev_completed("resp-2"),
-            ],
-            vec![
+            ]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        },
+        WebSocketConnectionConfig {
+            requests: vec![vec![
                 ev_response_created("resp-3"),
                 ev_assistant_message("msg-2", "done"),
                 ev_completed("resp-3"),
-            ],
-        ],
-        response_headers: Vec::new(),
-        accept_delay: None,
-        close_after_requests: false,
-    }])
+            ]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        },
+    ])
     .await;
 
     let mut builder = test_codex();
     let test = builder.build_with_websocket_server(&server).await?;
     // Phase 1: the first response mints state for its same-turn tool follow-up.
     test.submit_turn("run the echo command").await?;
-    // Phase 2: the follow-up replays that state on the same physical connection.
-    // Phase 3: the next logical turn reuses the connection but starts with empty state.
+    // Phase 2: the follow-up replays that state on a fresh connection.
+    // Phase 3: the next logical turn starts with empty state.
     test.submit_turn("start another turn").await?;
 
-    assert_eq!(server.handshakes().len(), 1);
-    let requests = server.single_connection();
+    assert_eq!(server.handshakes().len(), 3);
+    let requests: Vec<_> = server.connections().into_iter().flatten().collect();
     assert_eq!(requests.len(), 3);
-    assert_eq!(
+    assert!(
         requests
             .iter()
-            .map(|request| request.body_json()["client_metadata"][TURN_STATE_HEADER].clone())
-            .collect::<Vec<_>>(),
-        vec![json!(null), json!("ts-1"), json!(null)]
+            .all(|request| request.body_json().get("client_metadata").is_none())
     );
 
     server.shutdown().await;
@@ -145,12 +153,12 @@ async fn websocket_turn_state_persists_within_turn_and_resets_after() -> Result<
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_turn_state_is_stable_within_turn() -> Result<()> {
+async fn websocket_turn_state_metadata_is_omitted_for_follow_ups() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
-        requests: vec![
-            vec![
+    let server = start_websocket_server_with_headers(vec![
+        WebSocketConnectionConfig {
+            requests: vec![vec![
                 json!({
                     "type": "response.metadata",
                     "headers": {(TURN_STATE_HEADER): "ts-1"},
@@ -158,8 +166,13 @@ async fn websocket_turn_state_is_stable_within_turn() -> Result<()> {
                 ev_response_created("resp-1"),
                 ev_shell_command_call("ws-shell-1", "echo one"),
                 ev_completed("resp-1"),
-            ],
-            vec![
+            ]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        },
+        WebSocketConnectionConfig {
+            requests: vec![vec![
                 json!({
                     "type": "response.metadata",
                     "headers": {(TURN_STATE_HEADER): "ts-2"},
@@ -167,35 +180,38 @@ async fn websocket_turn_state_is_stable_within_turn() -> Result<()> {
                 ev_response_created("resp-2"),
                 ev_shell_command_call("ws-shell-2", "echo two"),
                 ev_completed("resp-2"),
-            ],
-            vec![
+            ]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        },
+        WebSocketConnectionConfig {
+            requests: vec![vec![
                 ev_response_created("resp-3"),
                 ev_assistant_message("msg-1", "done"),
                 ev_completed("resp-3"),
-            ],
-        ],
-        response_headers: Vec::new(),
-        accept_delay: None,
-        close_after_requests: false,
-    }])
+            ]],
+            response_headers: Vec::new(),
+            accept_delay: None,
+            close_after_requests: true,
+        },
+    ])
     .await;
     let mut builder = test_codex();
     let test = builder.build_with_websocket_server(&server).await?;
 
     // Phase 1: the initial request starts empty and receives the first metadata value.
     // Phase 2: the first tool follow-up replays it and ignores a later value.
-    // Phase 3: the second follow-up sends the original value on the same connection.
+    // Phase 3: the second follow-up sends the original value on a fresh connection.
     test.submit_turn("run two echo commands").await?;
 
-    assert_eq!(server.handshakes().len(), 1);
-    let requests = server.single_connection();
+    assert_eq!(server.handshakes().len(), 3);
+    let requests: Vec<_> = server.connections().into_iter().flatten().collect();
     assert_eq!(requests.len(), 3);
-    assert_eq!(
+    assert!(
         requests
             .iter()
-            .map(|request| request.body_json()["client_metadata"][TURN_STATE_HEADER].clone())
-            .collect::<Vec<_>>(),
-        vec![json!(null), json!("ts-1"), json!("ts-1")]
+            .all(|request| request.body_json().get("client_metadata").is_none())
     );
 
     server.shutdown().await;
