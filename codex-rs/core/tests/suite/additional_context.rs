@@ -103,13 +103,20 @@ async fn additional_context_is_model_visible_but_not_a_user_message_item() -> Re
         developer_context_texts,
         vec!["<automation_info>run one</automation_info>"]
     );
-    assert_eq!(
-        request.message_input_texts("user"),
-        vec![
-            "<external_browser_info>tab one</external_browser_info>",
-            "inspect the active tab",
-        ]
+    let developer_texts = request.message_input_texts("developer");
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text == "<external_browser_info>tab one</external_browser_info>"),
+        "current-turn external context should be developer-role in request, got {developer_texts:?}"
     );
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text == "inspect the active tab"),
+        "current-turn user prompt should be developer-role in request, got {developer_texts:?}"
+    );
+    assert_eq!(request.message_input_texts("user"), Vec::<String>::new());
 
     Ok(())
 }
@@ -158,7 +165,14 @@ async fn external_context_like_user_text_remains_a_user_message_item() -> Result
     .await;
 
     let request = request.single_request();
-    assert_eq!(request.message_input_texts("user"), vec!["<external_api>"]);
+    assert_eq!(request.message_input_texts("user"), Vec::<String>::new());
+    assert!(
+        request
+            .message_input_texts("developer")
+            .iter()
+            .any(|text| text == "<external_api>"),
+        "current-turn user text should be developer-role in request"
+    );
 
     Ok(())
 }
@@ -220,13 +234,18 @@ async fn additional_context_trust_controls_message_role() -> Result<()> {
         developer_context_texts,
         vec!["<automation_info>run one</automation_info>"]
     );
-    assert_eq!(
-        request.message_input_texts("user"),
-        vec![
-            "<external_browser_info>tab one</external_browser_info>",
-            "inspect context",
-        ]
+    let developer_texts = request.message_input_texts("developer");
+    assert!(
+        developer_texts
+            .iter()
+            .any(|text| text == "<external_browser_info>tab one</external_browser_info>"),
+        "current-turn external context should be developer-role in request, got {developer_texts:?}"
     );
+    assert!(
+        developer_texts.iter().any(|text| text == "inspect context"),
+        "current-turn user prompt should be developer-role in request, got {developer_texts:?}"
+    );
+    assert_eq!(request.message_input_texts("user"), Vec::<String>::new());
 
     Ok(())
 }
@@ -292,20 +311,39 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
     })
     .await;
 
+    let first_request = first_request.single_request();
+    let first_developer_texts = first_request.message_input_texts("developer");
+    assert!(
+        first_developer_texts
+            .iter()
+            .any(|text| text == "<external_browser_info>same tab</external_browser_info>"),
+        "current-turn external context should be developer-role, got {first_developer_texts:?}"
+    );
+    assert!(
+        first_developer_texts
+            .iter()
+            .any(|text| text == "first turn"),
+        "current-turn prompt should be developer-role, got {first_developer_texts:?}"
+    );
     assert_eq!(
-        first_request.single_request().message_input_texts("user"),
+        first_request.message_input_texts("user"),
+        Vec::<String>::new()
+    );
+
+    let second_request = second_request.single_request();
+    assert_eq!(
+        second_request.message_input_texts("user"),
         vec![
             "<external_browser_info>same tab</external_browser_info>",
             "first turn",
         ]
     );
-    assert_eq!(
-        second_request.single_request().message_input_texts("user"),
-        vec![
-            "<external_browser_info>same tab</external_browser_info>",
-            "first turn",
-            "second turn",
-        ]
+    assert!(
+        second_request
+            .message_input_texts("developer")
+            .iter()
+            .any(|text| text == "second turn"),
+        "current second prompt should be developer-role"
     );
 
     Ok(())
@@ -439,16 +477,48 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
     })
     .await;
 
+    let first_request = first_request.single_request();
+    let first_developer_texts = first_request.message_input_texts("developer");
+    assert!(
+        first_developer_texts
+            .iter()
+            .any(|text| text == "<external_automation_info>run one</external_automation_info>")
+            && first_developer_texts
+                .iter()
+                .any(|text| text == "<external_browser_info>tab one</external_browser_info>")
+            && first_developer_texts
+                .iter()
+                .any(|text| text == "first turn"),
+        "current first-turn items should be developer-role, got {first_developer_texts:?}"
+    );
     assert_eq!(
-        first_request.single_request().message_input_texts("user"),
+        first_request.message_input_texts("user"),
+        Vec::<String>::new()
+    );
+
+    let second_request = second_request.single_request();
+    assert_eq!(
+        second_request.message_input_texts("user"),
         vec![
             "<external_automation_info>run one</external_automation_info>",
             "<external_browser_info>tab one</external_browser_info>",
             "first turn",
         ]
     );
+    let second_developer_texts = second_request.message_input_texts("developer");
+    assert!(
+        second_developer_texts
+            .iter()
+            .any(|text| text == "<external_terminal_info>pty one</external_terminal_info>")
+            && second_developer_texts
+                .iter()
+                .any(|text| text == "second turn"),
+        "current second-turn items should be developer-role, got {second_developer_texts:?}"
+    );
+
+    let third_request = third_request.single_request();
     assert_eq!(
-        second_request.single_request().message_input_texts("user"),
+        third_request.message_input_texts("user"),
         vec![
             "<external_automation_info>run one</external_automation_info>",
             "<external_browser_info>tab one</external_browser_info>",
@@ -457,17 +527,15 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
             "second turn",
         ]
     );
-    assert_eq!(
-        third_request.single_request().message_input_texts("user"),
-        vec![
-            "<external_automation_info>run one</external_automation_info>",
-            "<external_browser_info>tab one</external_browser_info>",
-            "first turn",
-            "<external_terminal_info>pty one</external_terminal_info>",
-            "second turn",
-            "<external_browser_info>tab one</external_browser_info>",
-            "third turn",
-        ]
+    let third_developer_texts = third_request.message_input_texts("developer");
+    assert!(
+        third_developer_texts
+            .iter()
+            .any(|text| text == "<external_browser_info>tab one</external_browser_info>")
+            && third_developer_texts
+                .iter()
+                .any(|text| text == "third turn"),
+        "current third-turn items should be developer-role, got {third_developer_texts:?}"
     );
 
     Ok(())
@@ -550,11 +618,16 @@ async fn additional_context_values_are_truncated_before_model_input() -> Result<
         automation_text.len()
     );
 
-    let user_texts = request.message_input_texts("user");
-    let [external_text, user_text] = user_texts.as_slice() else {
-        panic!("expected external context plus user input, got {user_texts:?}");
-    };
-    assert_eq!(user_text, "summarize context");
+    let current_turn_texts = request.message_input_texts("developer");
+    let external_text = current_turn_texts
+        .iter()
+        .find(|text| text.starts_with("<external_browser_info>"))
+        .unwrap_or_else(|| panic!("expected external context, got {current_turn_texts:?}"));
+    let user_text = current_turn_texts
+        .iter()
+        .find(|text| text.as_str() == "summarize context")
+        .unwrap_or_else(|| panic!("expected user input, got {current_turn_texts:?}"));
+    assert_eq!(user_text.as_str(), "summarize context");
     assert!(external_text.starts_with(&format!(
         "<external_browser_info>browser-head-{}",
         "b".repeat(1024)

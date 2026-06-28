@@ -37,6 +37,77 @@ fn assistant_output_text(text: &str) -> ResponseItem {
     }
 }
 
+fn input_text_message(role: &str, text: &str, turn_id: Option<&str>) -> ResponseItem {
+    ResponseItem::Message {
+        id: None,
+        role: role.to_string(),
+        content: vec![ContentItem::InputText {
+            text: text.to_string(),
+        }],
+        phase: None,
+        internal_chat_message_metadata_passthrough: Some(
+            codex_protocol::models::InternalChatMessageMetadataPassthrough {
+                turn_id: turn_id.map(str::to_string),
+            },
+        ),
+    }
+}
+
+#[test]
+fn current_turn_user_messages_are_rewritten_as_developer_for_prompt() {
+    let input = vec![
+        input_text_message("user", "current user", Some("turn-current")),
+        input_text_message("user", "previous user", Some("turn-previous")),
+        input_text_message("user", "unstamped user", None),
+        input_text_message("developer", "current developer", Some("turn-current")),
+        assistant_output_text("current assistant"),
+    ];
+
+    let rewritten = rewrite_current_turn_user_messages_as_developer(input, "turn-current");
+
+    let roles = rewritten
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { role, .. } => Some(role.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        roles,
+        vec!["developer", "user", "user", "developer", "assistant"]
+    );
+}
+
+#[test]
+fn current_turn_role_rewrite_leaves_non_message_items_unchanged() {
+    let output = ResponseItem::FunctionCallOutput {
+        id: None,
+        call_id: "call-1".to_string(),
+        output: codex_protocol::models::FunctionCallOutputPayload::from_text(
+            "tool output".to_string(),
+        ),
+        internal_chat_message_metadata_passthrough: Some(
+            codex_protocol::models::InternalChatMessageMetadataPassthrough {
+                turn_id: Some("turn-current".to_string()),
+            },
+        ),
+    };
+
+    let rewritten = rewrite_current_turn_user_messages_as_developer(
+        vec![
+            output.clone(),
+            input_text_message("user", "current user", Some("turn-current")),
+        ],
+        "turn-current",
+    );
+
+    assert_eq!(rewritten[0], output);
+    assert!(matches!(
+        &rewritten[1],
+        ResponseItem::Message { role, .. } if role == "developer"
+    ));
+}
+
 #[tokio::test]
 async fn plan_mode_uses_contributed_turn_item_for_last_agent_message() {
     let (mut session, turn_context) = crate::session::tests::make_session_and_context().await;

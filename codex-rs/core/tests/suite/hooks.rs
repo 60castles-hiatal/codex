@@ -1747,10 +1747,10 @@ async fn blocked_user_prompt_submit_persists_additional_context_for_next_turn() 
     );
     assert!(
         request
-            .message_input_texts("user")
+            .message_input_texts("developer")
             .iter()
             .any(|text| text.contains("second prompt")),
-        "second request should include the accepted prompt",
+        "second request should include the accepted prompt as current-turn developer input",
     );
 
     let hook_inputs = read_user_prompt_submit_hook_inputs(test.codex_home_path())?;

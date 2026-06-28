@@ -1260,6 +1260,23 @@ pub(crate) fn build_prompt(
     }
 }
 
+fn rewrite_current_turn_user_messages_as_developer(
+    mut input: Vec<ResponseItem>,
+    turn_id: &str,
+) -> Vec<ResponseItem> {
+    for item in &mut input {
+        if item.turn_id() != Some(turn_id) {
+            continue;
+        }
+        if let ResponseItem::Message { role, .. } = item
+            && role == "user"
+        {
+            *role = "developer".to_string();
+        }
+    }
+    input
+}
+
 struct UsageLimitRotationTracker {
     account_count: Option<usize>,
     limited_accounts: HashSet<usize>,
@@ -1395,6 +1412,9 @@ async fn run_sampling_request(
                 .await
                 .for_prompt(&turn_context.model_info.input_modalities)
         };
+        let canonical_prompt_input = prompt_input.clone();
+        let prompt_input =
+            rewrite_current_turn_user_messages_as_developer(prompt_input, &turn_context.sub_id);
         let prompt = build_prompt(
             prompt_input,
             router.as_ref(),
@@ -1403,7 +1423,7 @@ async fn run_sampling_request(
         );
         let context_management =
             context_management_for_sampling(turn_context.as_ref(), client_session);
-        let err = match try_run_sampling_request(
+        let err = match Box::pin(try_run_sampling_request(
             tool_runtime.clone(),
             Arc::clone(&sess),
             Arc::clone(&turn_context),
@@ -1414,11 +1434,11 @@ async fn run_sampling_request(
             &prompt,
             cancellation_token.child_token(),
             context_management.clone(),
-        )
+        ))
         .await
         {
             Ok(output) => {
-                return Ok((output, original_input.unwrap_or(prompt.input)));
+                return Ok((output, original_input.unwrap_or(canonical_prompt_input)));
             }
             Err(CodexErr::ContextWindowExceeded) => {
                 sess.set_total_tokens_full(&turn_context).await;
@@ -1476,7 +1496,7 @@ async fn run_sampling_request(
         }
 
         if original_input.is_none() {
-            original_input = Some(prompt.input);
+            original_input = Some(canonical_prompt_input);
         }
 
         if !err.is_retryable() {

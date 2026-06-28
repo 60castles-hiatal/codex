@@ -119,16 +119,16 @@ async fn user_turn_includes_skill_instructions() -> Result<()> {
     .await;
 
     let request = mock.single_request();
-    let user_texts = request.message_input_texts("user");
+    let developer_texts = request.message_input_texts("developer");
     let skill_path_str = skill_path.to_string_lossy();
     assert!(
-        user_texts.iter().any(|text| {
+        developer_texts.iter().any(|text| {
             text.contains("<skill>\n<name>demo</name>")
                 && text.contains("<path>")
                 && text.contains(skill_body)
                 && text.contains(skill_path_str.as_ref())
         }),
-        "expected skill instructions in user input, got {user_texts:?}"
+        "expected current-turn skill instructions in developer input, got {developer_texts:?}"
     );
 
     Ok(())

@@ -2685,6 +2685,11 @@ impl Session {
     ) -> Cow<'a, [ResponseItem]> {
         let mut items = Cow::Borrowed(items);
         prepare_response_items(items.to_mut());
+        for item in items.to_mut() {
+            if matches!(item, ResponseItem::Message { role, .. } if role == "user") {
+                item.stamp_turn_id_if_missing(&turn_context.sub_id);
+            }
+        }
         if turn_context.config.features.enabled(Feature::ItemIds) {
             Self::assign_missing_response_item_ids(items)
         } else {

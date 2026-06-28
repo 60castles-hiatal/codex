@@ -1466,15 +1466,15 @@ async fn includes_user_instructions_message_in_request() {
         "expected permissions message to mention sandbox_mode, got {permissions_text:?}"
     );
 
-    assert_message_role(&request_body["input"][1], "user");
-    let user_context_texts = message_input_texts(&request_body["input"][1]);
+    assert_message_role(&request_body["input"][1], "developer");
+    let current_turn_context_texts = message_input_texts(&request_body["input"][1]);
     assert!(
-        user_context_texts
+        current_turn_context_texts
             .iter()
             .any(|text| text.starts_with("# AGENTS.md instructions")),
-        "expected AGENTS text in contextual user message, got {user_context_texts:?}"
+        "expected AGENTS text in current-turn developer message, got {current_turn_context_texts:?}"
     );
-    let ui_text = user_context_texts
+    let ui_text = current_turn_context_texts
         .iter()
         .copied()
         .find(|text| text.contains("<INSTRUCTIONS>"))
@@ -1482,11 +1482,11 @@ async fn includes_user_instructions_message_in_request() {
     assert!(ui_text.contains("<INSTRUCTIONS>"));
     assert!(ui_text.contains("be nice"));
     assert!(
-        user_context_texts
+        current_turn_context_texts
             .iter()
             .any(|text| text.starts_with("<environment_context>")
                 && text.ends_with("</environment_context>")),
-        "expected environment context in contextual user message, got {user_context_texts:?}"
+        "expected environment context in current-turn developer message, got {current_turn_context_texts:?}"
     );
 }
 
@@ -2667,15 +2667,15 @@ async fn includes_developer_instructions_message_in_request() {
         request_body["input"]
     );
 
-    assert_message_role(&request_body["input"][1], "user");
-    let user_context_texts = message_input_texts(&request_body["input"][1]);
+    assert_message_role(&request_body["input"][1], "developer");
+    let current_turn_context_texts = message_input_texts(&request_body["input"][1]);
     assert!(
-        user_context_texts
+        current_turn_context_texts
             .iter()
             .any(|text| text.starts_with("# AGENTS.md instructions")),
-        "expected AGENTS text in contextual user message, got {user_context_texts:?}"
+        "expected AGENTS text in current-turn developer message, got {current_turn_context_texts:?}"
     );
-    let ui_text = user_context_texts
+    let ui_text = current_turn_context_texts
         .iter()
         .copied()
         .find(|text| text.contains("<INSTRUCTIONS>"))
@@ -2683,11 +2683,11 @@ async fn includes_developer_instructions_message_in_request() {
     assert!(ui_text.contains("<INSTRUCTIONS>"));
     assert!(ui_text.contains("be nice"));
     assert!(
-        user_context_texts
+        current_turn_context_texts
             .iter()
             .any(|text| text.starts_with("<environment_context>")
                 && text.ends_with("</environment_context>")),
-        "expected environment context in contextual user message, got {user_context_texts:?}"
+        "expected environment context in current-turn developer message, got {current_turn_context_texts:?}"
     );
 }
 
