@@ -362,6 +362,7 @@ async fn run_remote_compaction_request_v2(
                 turn_context.config.service_tier.clone(),
                 responses_metadata,
                 &InferenceTraceContext::disabled(),
+                /*context_management*/ None,
             )
             .await
         {

@@ -107,6 +107,40 @@ fn client_with_receiver() -> (AnalyticsEventsClient, mpsc::Receiver<AnalyticsFac
     (AnalyticsEventsClient { queue: Some(queue) }, receiver)
 }
 
+fn dummy_auth_manager() -> Arc<codex_login::AuthManager> {
+    codex_login::AuthManager::from_auth_for_testing(
+        codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing(),
+    )
+}
+
+#[tokio::test]
+async fn analytics_events_client_is_disabled_when_config_is_unset() {
+    let client = AnalyticsEventsClient::new(
+        dummy_auth_manager(),
+        "https://chatgpt.com/backend-api".to_string(),
+        /*analytics_enabled*/ None,
+    );
+
+    assert!(client.queue.is_none());
+}
+
+#[tokio::test]
+async fn analytics_events_client_only_enables_delivery_when_config_is_true() {
+    let disabled = AnalyticsEventsClient::new(
+        dummy_auth_manager(),
+        "https://chatgpt.com/backend-api".to_string(),
+        /*analytics_enabled*/ Some(false),
+    );
+    assert!(disabled.queue.is_none());
+
+    let enabled = AnalyticsEventsClient::new(
+        dummy_auth_manager(),
+        "https://chatgpt.com/backend-api".to_string(),
+        /*analytics_enabled*/ Some(true),
+    );
+    assert!(enabled.queue.is_some());
+}
+
 #[test]
 #[cfg(debug_assertions)]
 fn analytics_destination_uses_explicit_capture_file() {

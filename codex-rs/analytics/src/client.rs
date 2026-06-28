@@ -183,10 +183,11 @@ impl AnalyticsEventsClient {
         base_url: String,
         analytics_enabled: Option<bool>,
     ) -> Self {
-        let destination = AnalyticsEventsDestination::from_base_url(base_url);
         Self {
-            queue: (analytics_enabled != Some(false))
-                .then(|| AnalyticsEventsQueue::new(Arc::clone(&auth_manager), destination)),
+            queue: (analytics_enabled == Some(true)).then(|| {
+                let destination = AnalyticsEventsDestination::from_base_url(base_url);
+                AnalyticsEventsQueue::new(Arc::clone(&auth_manager), destination)
+            }),
         }
     }
 

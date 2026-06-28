@@ -1,0 +1,964 @@
+app-server/src/config/mod.rs:1	A small gate opens; external agents find their room in the crate.
+apply-patch/tests/fixtures/scenarios/.gitattributes:1	All paths drink the same linefeed; the patch garden keeps one weather.
+apply-patch/tests/fixtures/scenarios/001_add_file/expected/bar.md:1	A first page lifts its latch; new words step into daylight.
+apply-patch/tests/fixtures/scenarios/002_multiple_operations/expected/nested/new.txt:1	A small made thing appears where the nested path was waiting.
+apply-patch/tests/fixtures/scenarios/002_multiple_operations/input/delete.txt:1	The old tag dims; deletion has already rehearsed its exit.
+apply-patch/tests/fixtures/scenarios/004_move_to_new_directory/expected/old/other.txt:1	Beside the move, a quiet file keeps its own name warm.
+apply-patch/tests/fixtures/scenarios/004_move_to_new_directory/expected/renamed/dir/name.txt:1	The renamed room receives a fresher voice and calls it home.
+apply-patch/tests/fixtures/scenarios/004_move_to_new_directory/input/old/name.txt:1	Old content folds its coat before the path learns a new address.
+apply-patch/tests/fixtures/scenarios/004_move_to_new_directory/input/old/other.txt:1	Unmoved by ceremony, the neighboring file holds steady.
+apply-patch/tests/fixtures/scenarios/005_rejects_empty_patch/expected/foo.txt:1	Stable waits unchanged, proof that nothingness made no dent.
+apply-patch/tests/fixtures/scenarios/005_rejects_empty_patch/input/foo.txt:1	Stable begins the trial with both feet planted in plain soil.
+apply-patch/tests/fixtures/scenarios/007_rejects_missing_file_delete/expected/foo.txt:1	Stable remains after the absent target fails to vanish.
+apply-patch/tests/fixtures/scenarios/007_rejects_missing_file_delete/input/foo.txt:1	Stable stands before the phantom delete knocks on no door.
+apply-patch/tests/fixtures/scenarios/008_rejects_empty_update_hunk/expected/foo.txt:1	Stable survives the hollow hunk and keeps its single note.
+apply-patch/tests/fixtures/scenarios/008_rejects_empty_update_hunk/input/foo.txt:1	Stable enters the empty hunk with no reason to bend.
+apply-patch/tests/fixtures/scenarios/009_requires_existing_file_for_update/expected/foo.txt:1	Stable marks the known ground where updates are allowed to land.
+apply-patch/tests/fixtures/scenarios/009_requires_existing_file_for_update/input/foo.txt:1	Stable offers the existing page, a real place for change to ask.
+apply-patch/tests/fixtures/scenarios/010_move_overwrites_existing_destination/expected/old/other.txt:1	The bystander file stays clear while overwrite thunder passes.
+apply-patch/tests/fixtures/scenarios/010_move_overwrites_existing_destination/expected/renamed/dir/name.txt:1	New arrives at the destination and covers yesterday's claim.
+apply-patch/tests/fixtures/scenarios/010_move_overwrites_existing_destination/input/old/name.txt:1	From is the arrow's tail, brief and ready to travel.
+apply-patch/tests/fixtures/scenarios/010_move_overwrites_existing_destination/input/old/other.txt:1	Unrelated file hums beside the route, untouched by the move.
+apply-patch/tests/fixtures/scenarios/010_move_overwrites_existing_destination/input/renamed/dir/name.txt:1	Existing waits in the doorway, soon to yield its sign.
+apply-patch/tests/fixtures/scenarios/011_add_overwrites_existing_file/expected/duplicate.txt:1	New content takes the duplicate name and makes it clean again.
+apply-patch/tests/fixtures/scenarios/011_add_overwrites_existing_file/input/duplicate.txt:1	Old content keeps the first claim before addition rewrites the room.
+apply-patch/tests/fixtures/scenarios/012_delete_directory_fails/expected/dir/foo.txt:1	Stable stays nested when the directory refuses to disappear.
+apply-patch/tests/fixtures/scenarios/012_delete_directory_fails/input/dir/foo.txt:1	Stable waits inside the folder, testing the delete command's reach.
+apply-patch/tests/fixtures/scenarios/013_rejects_invalid_hunk_header/expected/foo.txt:1	Stable is the answer when a crooked header loses its way.
+apply-patch/tests/fixtures/scenarios/013_rejects_invalid_hunk_header/input/foo.txt:1	Stable faces the malformed map and does not follow it.
+apply-patch/tests/fixtures/scenarios/014_update_file_appends_trailing_newline/input/no_newline.txt:1	No newline at end, a sentence holding its final breath.
+apply-patch/tests/fixtures/scenarios/015_failure_after_partial_success_leaves_changes/expected/created.txt:1	Hello remains, a partial success waving from the shore.
+apply-patch/tests/fixtures/scenarios/017_whitespace_padded_hunk_header/expected/foo.txt:1	New slips through padded spaces and still finds the mark.
+apply-patch/tests/fixtures/scenarios/017_whitespace_padded_hunk_header/input/foo.txt:1	Old stands before the padded header trims its disguise.
+apply-patch/tests/fixtures/scenarios/018_whitespace_padded_patch_markers/expected/file.txt:1	Two answers after the markers shed their extra snow.
+apply-patch/tests/fixtures/scenarios/018_whitespace_padded_patch_markers/input/file.txt:1	One begins before padded markers teach the file to count again.
+apply-patch/tests/fixtures/scenarios/020_delete_file_success/expected/keep.txt:1	Keep is the small survivor after deletion closes another door.
+apply-patch/tests/fixtures/scenarios/020_delete_file_success/input/keep.txt:1	Keep starts intact, the line chosen to remain.
+apply-patch/tests/fixtures/scenarios/020_delete_file_success/input/obsolete.txt:1	Obsolete names itself softly before the successful removal.
+apply-patch/tests/fixtures/scenarios/020_whitespace_padded_patch_marker_lines/expected/file.txt:1	Two emerges when padded patch markers are read correctly.
+apply-patch/tests/fixtures/scenarios/020_whitespace_padded_patch_marker_lines/input/file.txt:1	One waits at the beginning, simple as an unopened patch.
+bwrap/config.h:1	A package string is stamped on the wrapper, naming its Codex-forged shell.
+code-mode-host/src/main.rs:1	An empty main opens and closes, a host that proves it can stand.
+core/src/context/permissions_instructions.rs:1	Permissions instructions cross the crate border, carrying their borrowed lamp.
+core/src/function_tool.rs:1	The function tool offers one error type, a sharp name passed hand to hand.
+core/src/utils/mod.rs:1	The utils door swings toward paths, one small module sign above it.
+core/src/utils/path_utils.rs:1	Path helpers pour outward, every utility star exported in a single breath.
+mcp-server/tests/suite/mod.rs:1	The suite gathers the Codex tool under one quiet module roof.
+memories/read/src/metrics.rs:1	A metric name is strung like a bell for memory usage to ring.
+prompts/templates/permissions/approval_policy/never.md:1	Never means the sandbox gate stays shut, even when commands ask loudly.
+prompts/templates/permissions/approval_policy/on_failure.md:1	On failure, the command learns to ask after the sandbox says no.
+prompts/templates/permissions/approval_policy/unless_trusted.md:1	Unless trusted, the shell lifts its hand and waits for human consent.
+prompts/templates/permissions/sandbox_mode/danger_full_access.md:1	Full access removes the fence; the line names the open field plainly.
+prompts/templates/permissions/sandbox_mode/read_only.md:1	Read-only leaves every file visible but lets no edits take root.
+prompts/templates/permissions/sandbox_mode/workspace_write.md:1	Workspace-write marks the garden beds where changes may safely grow.
+state/migrations/0005_threads_cli_version.sql:1	The threads table receives a CLI version, a timestamp without time.
+state/migrations/0022_threads_agent_path.sql:1	An agent path is added so each thread can remember its trail.
+state/migrations/0030_threads_thread_source.sql:1	Thread source becomes a column, origin given a seat at the table.
+state/migrations/0031_drop_device_key_bindings.sql:1	Device key bindings fall away if present, an old lock swept clean.
+state/migrations/0034_drop_thread_goals.sql:1	Thread goals drop from storage, leaving the table lighter than before.
+tui/src/public_widgets/mod.rs:1	The public widget room names composer input as its first resident.
+utils/cargo-bin/repo_root.marker:1	A blank marker says nothing and still points home.
+vendor/bubblewrap/.dir-locals.el:1	Editor habits settle in Lisp, teaching C files the GNU posture.
+vendor/bubblewrap/demos/flatpak.bpf:1	Binary policy murmurs in nulls and opcodes, a filter folded tight.
+vendor/bubblewrap/tests/use-as-subproject/config.h:1	The subproject warns: do not borrow the parent's generated mask.
+vendor/bubblewrap/tests/use-as-subproject/dummy-config.h.in:1	The dummy config raises its hand against the superproject's shadow.
+apply-patch/tests/fixtures/scenarios/002_multiple_operations/expected/modify.txt:1	The first line keeps its place before the change announces itself.
+apply-patch/tests/fixtures/scenarios/002_multiple_operations/expected/modify.txt:2	Changed steps in second, proof the patch touched exactly here.
+apply-patch/tests/fixtures/scenarios/002_multiple_operations/input/modify.txt:1	Line one waits as the fixture's anchor.
+apply-patch/tests/fixtures/scenarios/002_multiple_operations/input/modify.txt:2	Line two follows, still unaltered before the patch arrives.
+apply-patch/tests/fixtures/scenarios/005_rejects_empty_patch/patch.txt:1	The patch curtain rises with three stars and a command.
+apply-patch/tests/fixtures/scenarios/005_rejects_empty_patch/patch.txt:2	The curtain falls at once, emptiness sealed between markers.
+apply-patch/tests/fixtures/scenarios/006_rejects_missing_context/expected/modify.txt:1	Line one survives the missing context's failed reach.
+apply-patch/tests/fixtures/scenarios/006_rejects_missing_context/expected/modify.txt:2	Line two remains beside it, untouched by the bad map.
+apply-patch/tests/fixtures/scenarios/006_rejects_missing_context/input/modify.txt:1	Line one starts the context that the patch will misremember.
+apply-patch/tests/fixtures/scenarios/006_rejects_missing_context/input/modify.txt:2	Line two completes the pair before rejection protects it.
+apply-patch/tests/fixtures/scenarios/014_update_file_appends_trailing_newline/expected/no_newline.txt:1	First line receives the newline that the old file denied.
+apply-patch/tests/fixtures/scenarios/014_update_file_appends_trailing_newline/expected/no_newline.txt:2	Second line closes the repaired ending with a calmer breath.
+apply-patch/tests/fixtures/scenarios/016_pure_addition_update_chunk/input/input.txt:1	Line one opens the pure addition's small stage.
+apply-patch/tests/fixtures/scenarios/016_pure_addition_update_chunk/input/input.txt:2	Line two gives the addition a second rung to climb.
+apply-patch/tests/fixtures/scenarios/021_update_file_deletion_only/expected/lines.txt:1	Line one remains after the middle is lifted away.
+apply-patch/tests/fixtures/scenarios/021_update_file_deletion_only/expected/lines.txt:2	Line three moves closer, the gap now cleanly closed.
+apply-patch/tests/fixtures/scenarios/022_update_file_end_of_file_marker/expected/tail.txt:1	First keeps its lead while the end marker watches.
+apply-patch/tests/fixtures/scenarios/022_update_file_end_of_file_marker/expected/tail.txt:2	Second updated turns the tail into fresh evidence.
+apply-patch/tests/fixtures/scenarios/022_update_file_end_of_file_marker/input/tail.txt:1	First begins the tail before the marker has spoken.
+apply-patch/tests/fixtures/scenarios/022_update_file_end_of_file_marker/input/tail.txt:2	Second waits as the old ending, ready to be renamed.
+chatgpt/tests/suite/mod.rs:1	A suite comment gathers scattered tests into one hallway.
+chatgpt/tests/suite/mod.rs:2	The apply command module steps under the shared roof.
+core/src/apps/mod.rs:1	Only tests see this gate swing open.
+core/src/apps/mod.rs:2	Render waits behind the test gate, a small private stage.
+core/src/mention_syntax.rs:1	The plugin mention sigil is handed outward, the glyph that names an app.
+core/src/mention_syntax.rs:2	The tool mention sigil follows, a mark for callable craft.
+core/src/original_image_detail.rs:1	Original image detail asks whether the full view may be fetched.
+core/src/original_image_detail.rs:2	Sanitizing image detail trims the request to what is allowed.
+login/src/auth/error.rs:1	The refresh-token error crosses crates carrying the failure's name.
+login/src/auth/error.rs:2	The reason follows, giving the failure a sharper face.
+otel/src/events/mod.rs:1	Session telemetry receives its module, where traces learn the turn.
+otel/src/events/mod.rs:2	Shared event pieces wait beside it, common timber for spans.
+prompts/src/compact.rs:1	The summarization prompt is bound at compile time from its hidden page.
+prompts/src/compact.rs:2	The summary prefix is included too, a small preface for compressed memory.
+state/migrations/0009_stage1_outputs_rollout_slug.sql:1	Stage-one outputs are called to the workbench.
+state/migrations/0009_stage1_outputs_rollout_slug.sql:2	A rollout slug column gives each output a release-name trail.
+state/migrations/0013_threads_agent_nickname.sql:1	Threads gain an agent nickname, a softer name beside the id.
+state/migrations/0013_threads_agent_nickname.sql:2	Threads gain an agent role, a job title stored in plain text.
+state/migrations/0015_agent_jobs_max_runtime_seconds.sql:1	Agent jobs are opened for one more setting.
+state/migrations/0015_agent_jobs_max_runtime_seconds.sql:2	Max runtime seconds becomes the job's measured fuse.
+state/migrations/0016_memory_usage.sql:1	Stage-one outputs start counting how often memory is used.
+state/migrations/0016_memory_usage.sql:2	Last usage joins the table, a footprint of the latest return.
+state/migrations/0017_phase2_selection_flag.sql:1	Stage-one outputs are summoned again for phase-two choosing.
+state/migrations/0017_phase2_selection_flag.sql:2	Selected for phase two begins false, a flag asleep at zero.
+state/migrations/0019_thread_dynamic_tools_defer_loading.sql:1	Thread dynamic tools line up for deferred loading.
+state/migrations/0019_thread_dynamic_tools_defer_loading.sql:2	Defer loading arrives as an integer promise to wait.
+state/migrations/0020_threads_model_reasoning_effort.sql:1	Threads gain a model column, naming the mind that answered.
+state/migrations/0020_threads_model_reasoning_effort.sql:2	Reasoning effort joins it, a stored trace of how hard to think.
+state/migrations/0026_thread_dynamic_tools_namespace.sql:1	Thread dynamic tools open space for a namespace.
+state/migrations/0026_thread_dynamic_tools_namespace.sql:2	Namespace enters as text, a label around the tool's name.
+state/migrations/0027_threads_cwd_sort_indexes.sql:1	An archived-cwd-created index braids place, time, and id for search.
+state/migrations/0027_threads_cwd_sort_indexes.sql:2	An archived-cwd-updated index gives recent work its faster lane.
+state/migrations/0035_drop_memory_tables.sql:1	The jobs table is dropped if it still lingers from memory's past.
+state/migrations/0035_drop_memory_tables.sql:2	Stage-one outputs follow, old memory scaffolding cleared.
+state/migrations/0037_remote_control_enrollments_enabled.sql:1	Remote control enrollments are reopened for an enabled flag.
+state/migrations/0037_remote_control_enrollments_enabled.sql:2	Remote control enabled lands as the switch in the row.
+tui/src/version.rs:1	The doc line names the CLI version that compile time will seal.
+tui/src/version.rs:2	The constant captures Cargo's package version and calls it Codex.
+v8-poc/.gitignore:1	The ordinary target directory is waved away from version control.
+v8-poc/.gitignore:2	The Rust-flavored target follows, another build shadow ignored.
+vendor/bubblewrap/tests/use-as-subproject/.gitignore:1	The subproject build directory is kept out of the record.
+vendor/bubblewrap/tests/use-as-subproject/.gitignore:2	Nested subprojects are ignored, dependencies left to be fetched.
+vendor/bubblewrap/uncrustify.sh:1	A shell script begins with the small spell that finds sh.
+vendor/bubblewrap/uncrustify.sh:2	Uncrustify marches over C and headers, leaving no backup footprints.
+README.md:1	The repository names itself Codex CLI, a title at the gate.
+README.md:2	A blank breath separates the name from the road outward.
+README.md:3	The documentation link points beyond the tree to the user's map.
+apply-patch/src/main.rs:1	Main promises never to return, handing fate to the patch runner.
+apply-patch/src/main.rs:2	The apply-patch crate receives control like a passed tool handle.
+apply-patch/src/main.rs:3	A final brace shuts the tiny launcher cleanly.
+apply-patch/tests/all.rs:1	The integration binary gathers its scattered tests into one vessel.
+apply-patch/tests/all.rs:2	The comment names the suite directory where the cases live.
+apply-patch/tests/all.rs:3	The suite module steps forward as the single door.
+apply-patch/tests/fixtures/scenarios/007_rejects_missing_file_delete/patch.txt:1	The patch begins with ceremony before aiming at absence.
+apply-patch/tests/fixtures/scenarios/007_rejects_missing_file_delete/patch.txt:2	The delete command names a missing file and exposes the failure.
+apply-patch/tests/fixtures/scenarios/007_rejects_missing_file_delete/patch.txt:3	The patch ends after proving deletion needs a target.
+apply-patch/tests/fixtures/scenarios/008_rejects_empty_update_hunk/patch.txt:1	The patch marker opens an update that will bring no body.
+apply-patch/tests/fixtures/scenarios/008_rejects_empty_update_hunk/patch.txt:2	The update header names foo, but no hunk follows to speak.
+apply-patch/tests/fixtures/scenarios/008_rejects_empty_update_hunk/patch.txt:3	The end marker closes the hollow request.
+apply-patch/tests/fixtures/scenarios/012_delete_directory_fails/patch.txt:1	The patch starts before walking into a directory-shaped mistake.
+apply-patch/tests/fixtures/scenarios/012_delete_directory_fails/patch.txt:2	The delete line points at a directory, not a file.
+apply-patch/tests/fixtures/scenarios/012_delete_directory_fails/patch.txt:3	The patch closes with the failure already seeded.
+apply-patch/tests/fixtures/scenarios/013_rejects_invalid_hunk_header/patch.txt:1	The patch begins under a valid banner.
+apply-patch/tests/fixtures/scenarios/013_rejects_invalid_hunk_header/patch.txt:2	Frobnicate pretends to be a file action and gives itself away.
+apply-patch/tests/fixtures/scenarios/013_rejects_invalid_hunk_header/patch.txt:3	The end marker leaves the invalid header trapped inside.
+apply-patch/tests/fixtures/scenarios/019_unicode_simple/expected/foo.txt:1	Line one anchors the unicode case in plain ASCII ground.
+apply-patch/tests/fixtures/scenarios/019_unicode_simple/expected/foo.txt:2	Accents and a check mark arrive, proving the patch keeps richer text.
+apply-patch/tests/fixtures/scenarios/019_unicode_simple/expected/foo.txt:3	Line three closes the fixture after the unicode bloom.
+apply-patch/tests/fixtures/scenarios/019_unicode_simple/input/foo.txt:1	Line one begins before the unicode edit adds its final sign.
+apply-patch/tests/fixtures/scenarios/019_unicode_simple/input/foo.txt:2	Naive cafe already carries accents, waiting for one more symbol.
+apply-patch/tests/fixtures/scenarios/019_unicode_simple/input/foo.txt:3	Line three waits unchanged below the accented middle.
+apply-patch/tests/fixtures/scenarios/020_delete_file_success/patch.txt:1	The patch opens with a clean deletion in mind.
+apply-patch/tests/fixtures/scenarios/020_delete_file_success/patch.txt:2	Obsolete is named, and the file is invited to leave.
+apply-patch/tests/fixtures/scenarios/020_delete_file_success/patch.txt:3	The patch ends after the doomed path is recorded.
+apply-patch/tests/fixtures/scenarios/021_update_file_deletion_only/input/lines.txt:1	Line one stands before a deletion-only edit removes the middle.
+apply-patch/tests/fixtures/scenarios/021_update_file_deletion_only/input/lines.txt:2	Line two is the candidate for silence.
+apply-patch/tests/fixtures/scenarios/021_update_file_deletion_only/input/lines.txt:3	Line three waits to move upward after the cut.
+chatgpt/tests/all.rs:1	The ChatGPT integration binary gathers every module into one run.
+chatgpt/tests/all.rs:2	The comment points to the suite folder where the tests reside.
+chatgpt/tests/all.rs:3	The suite module becomes the common entrance.
+cloud-tasks-mock-client/src/lib.rs:1	The mock module is named before its client is offered.
+cloud-tasks-mock-client/src/lib.rs:2	A blank line leaves a small pause between privacy and export.
+cloud-tasks-mock-client/src/lib.rs:3	MockClient is re-exported, ready for tests to borrow.
+codex-home/src/lib.rs:1	The instructions module is tucked inside the home crate.
+codex-home/src/lib.rs:2	A blank line clears space before the public handoff.
+codex-home/src/lib.rs:3	The user-instructions provider is re-exported as the crate's gift.
+execpolicy-legacy/build.rs:1	The build script opens its small main function.
+execpolicy-legacy/build.rs:2	Cargo is told to rerun when the default policy changes.
+execpolicy-legacy/build.rs:3	The build script closes after setting its watch.
+execpolicy-legacy/tests/all.rs:1	The legacy policy tests are gathered into one integration binary.
+execpolicy-legacy/tests/all.rs:2	The comment names the suite directory as their home.
+execpolicy-legacy/tests/all.rs:3	The suite module carries the collected cases.
+linux-sandbox/build.rs:1	The Linux sandbox build script opens with a simple main.
+linux-sandbox/build.rs:2	Cargo watches the bubblewrap hash environment for change.
+linux-sandbox/build.rs:3	The brace closes after the build script sets its trigger.
+linux-sandbox/tests/suite/mod.rs:1	The sandbox suite comment gathers former standalone tests.
+linux-sandbox/tests/suite/mod.rs:2	Landlock joins the suite as one guarded path.
+linux-sandbox/tests/suite/mod.rs:3	Managed proxy follows, another case under the same roof.
+prompts/src/apply_patch.rs:1	The doc line names detailed guidance for using apply_patch.
+prompts/src/apply_patch.rs:2	The constant is declared, ready to hold the tool instructions.
+prompts/src/apply_patch.rs:3	The instructions are included from their markdown source.
+prompts/src/realtime.rs:1	The backend realtime prompt is included as a compile-time string.
+prompts/src/realtime.rs:2	End instructions are bound for the moment realtime falls silent.
+prompts/src/realtime.rs:3	Start instructions are bound for the moment realtime begins.
+prompts/templates/realtime/realtime_end.md:1	The realtime conversation is declared ended.
+prompts/templates/realtime/realtime_end.md:2	A blank line gives the mode switch room to breathe.
+prompts/templates/realtime/realtime_end.md:3	Future input returns to typed chat, with transcript assumptions set aside.
+rust-toolchain.toml:1	The toolchain table opens, naming the compiler contract.
+rust-toolchain.toml:2	Rust 1.95.0 is pinned as the channel for this tree.
+rust-toolchain.toml:3	Clippy, rustfmt, and rust-src are listed as the needed tools.
+skills/src/assets/samples/openai-docs/assets/openai-small.svg:1	The small OpenAI SVG opens with a fourteen-pixel viewbox.
+skills/src/assets/samples/openai-docs/assets/openai-small.svg:2	A dense path draws the booklike glyph in one long current-color stroke.
+skills/src/assets/samples/openai-docs/assets/openai-small.svg:3	The SVG closes after the tiny mark is shaped.
+skills/src/assets/samples/plugin-creator/assets/plugin-creator-small.svg:1	The plugin creator icon opens a twenty-pixel square.
+skills/src/assets/samples/plugin-creator/assets/plugin-creator-small.svg:2	A black path knots pencil and spark into the creator's small emblem.
+skills/src/assets/samples/plugin-creator/assets/plugin-creator-small.svg:3	The SVG tag closes around the finished miniature.
+skills/src/assets/samples/skill-creator/assets/skill-creator-small.svg:1	The skill creator icon opens the same twenty-pixel stage.
+skills/src/assets/samples/skill-creator/assets/skill-creator-small.svg:2	The black path repeats the crafting mark, a pencil made of coordinates.
+skills/src/assets/samples/skill-creator/assets/skill-creator-small.svg:3	The SVG closes with the icon complete.
+skills/src/assets/samples/skill-installer/assets/skill-installer-small.svg:1	The installer icon opens a sixteen-pixel viewbox.
+skills/src/assets/samples/skill-installer/assets/skill-installer-small.svg:2	A black path draws the package shape and its small fitting teeth.
+skills/src/assets/samples/skill-installer/assets/skill-installer-small.svg:3	The SVG closes after the installer mark is sealed.
+state/migrations/0003_logs_thread_id.sql:1	Logs gain a thread id, tying entries back to conversation.
+state/migrations/0003_logs_thread_id.sql:2	A blank line separates the new column from its lookup path.
+state/migrations/0003_logs_thread_id.sql:3	An index is created so thread logs can be found quickly.
+state/migrations/0010_logs_process_id.sql:1	Logs gain a process UUID, a second trail through execution.
+state/migrations/0010_logs_process_id.sql:2	A blank line gives the column and index their own space.
+state/migrations/0010_logs_process_id.sql:3	The process UUID index is built for faster log retrieval.
+state/migrations/0018_phase2_selection_snapshot.sql:1	Stage-one outputs are reopened for a selection snapshot.
+state/migrations/0018_phase2_selection_snapshot.sql:2	The source update time is stored beside the phase-two choice.
+state/migrations/0018_phase2_selection_snapshot.sql:3	Threads receive a memory mode that begins enabled by default.
+state/migrations/0023_drop_logs.sql:1	Incremental vacuum is enabled before logs are removed.
+state/migrations/0023_drop_logs.sql:2	A blank line pauses before the table is swept away.
+state/migrations/0023_drop_logs.sql:3	The logs table is dropped if it still exists.
+vendor/bubblewrap/CODE-OF-CONDUCT.md:1	The code of conduct opens under the bubblewrap project name.
+vendor/bubblewrap/CODE-OF-CONDUCT.md:2	A blank line leaves room before the external covenant.
+vendor/bubblewrap/CODE-OF-CONDUCT.md:3	The project follows the Containers community standard by link.
+vendor/bubblewrap/tests/use-as-subproject/README:1	The example project begins by explaining its bubblewrap subproject role.
+vendor/bubblewrap/tests/use-as-subproject/README:2	The second line says a successful build is the intended proof.
+vendor/bubblewrap/tests/use-as-subproject/README:3	Flatpak is named as the larger project that could do the same.
+windows-sandbox-rs/src/elevated/mod.rs:1	The elevated module exposes framed IPC for privileged conversation.
+windows-sandbox-rs/src/elevated/mod.rs:2	The runner client joins as the caller's elevated hand.
+windows-sandbox-rs/src/elevated/mod.rs:3	The runner pipe joins as the channel beneath the client.
+windows-sandbox-rs/src/unified_exec/backends/mod.rs:1	The elevated backend is listed first for unified execution.
+windows-sandbox-rs/src/unified_exec/backends/mod.rs:2	The legacy backend remains beside it for older paths.
+windows-sandbox-rs/src/unified_exec/backends/mod.rs:3	Windows common code is named as the shared floor.
+prompts/templates/compact/summary_prefix.md:1	The compact prefix carries an earlier model's lantern into the next mind.
+vendor/bubblewrap/demos/flatpak.bpf:2	The second binary record keeps filtering after the byte stream turns its page.
+apply-patch/tests/fixtures/scenarios/001_add_file/patch.txt:1	The add-file patch opens its formal gate.
+apply-patch/tests/fixtures/scenarios/001_add_file/patch.txt:2	Bar markdown is named as the new page to be born.
+apply-patch/tests/fixtures/scenarios/001_add_file/patch.txt:3	The added line enters with a plus sign and a first sentence.
+apply-patch/tests/fixtures/scenarios/001_add_file/patch.txt:4	The patch closes after the new file has been declared.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/expected/multi.txt:1	Line one remains the steady root of the multi-chunk result.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/expected/multi.txt:2	Changed two marks the first chunk's successful turn.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/expected/multi.txt:3	Line three stands unchanged between edits.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/expected/multi.txt:4	Changed four answers from the second chunk's landing place.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/input/multi.txt:1	Line one begins the input before any chunk has moved.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/input/multi.txt:2	Line two waits as the first future change.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/input/multi.txt:3	Line three gives the fixture a quiet middle.
+apply-patch/tests/fixtures/scenarios/003_multiple_chunks/input/multi.txt:4	Line four waits as the second future change.
+apply-patch/tests/fixtures/scenarios/011_add_overwrites_existing_file/patch.txt:1	The overwrite-add patch starts with the standard banner.
+apply-patch/tests/fixtures/scenarios/011_add_overwrites_existing_file/patch.txt:2	The duplicate path is named for replacement by addition.
+apply-patch/tests/fixtures/scenarios/011_add_overwrites_existing_file/patch.txt:3	New content arrives with the plus sign's insistence.
+apply-patch/tests/fixtures/scenarios/011_add_overwrites_existing_file/patch.txt:4	The patch ends once overwrite intent is fully written.
+apply-patch/tests/fixtures/scenarios/016_pure_addition_update_chunk/expected/input.txt:1	Line one stays above the pure addition.
+apply-patch/tests/fixtures/scenarios/016_pure_addition_update_chunk/expected/input.txt:2	Line two stays beside it, unchanged and useful.
+apply-patch/tests/fixtures/scenarios/016_pure_addition_update_chunk/expected/input.txt:3	The first added line appears where the hunk made room.
+apply-patch/tests/fixtures/scenarios/016_pure_addition_update_chunk/expected/input.txt:4	The second added line completes the new pair.
+apply-patch/tests/suite/mod.rs:1	The CLI tests are named as one part of the suite.
+apply-patch/tests/suite/mod.rs:2	Scenario tests follow, carrying the fixture stories.
+apply-patch/tests/suite/mod.rs:3	The tool tests are guarded away from Windows.
+apply-patch/tests/suite/mod.rs:4	The tool module joins only where the platform allows.
+codex-api/src/requests/mod.rs:1	Request headers get their private module.
+codex-api/src/requests/mod.rs:2	Response requests get their private module beside it.
+codex-api/src/requests/mod.rs:3	A blank line separates internal modules from public export.
+codex-api/src/requests/mod.rs:4	Compression is re-exported from responses as the visible handle.
+collaboration-mode-templates/src/lib.rs:1	The plan template is embedded as a compile-time string.
+collaboration-mode-templates/src/lib.rs:2	The default template follows as the ordinary voice.
+collaboration-mode-templates/src/lib.rs:3	The execute template waits for action-shaped collaboration.
+collaboration-mode-templates/src/lib.rs:4	Pair programming closes the set with a shared-work script.
+exec/tests/fixtures/apply_patch_freeform_final.txt:1	A base class opens the tiny Python fixture.
+exec/tests/fixtures/apply_patch_freeform_final.txt:2	A method is declared, indented under the class.
+exec/tests/fixtures/apply_patch_freeform_final.txt:3	A blank line leaves a breath inside the method body.
+exec/tests/fixtures/apply_patch_freeform_final.txt:4	The method returns true, the fixture's final answer.
+otel/tests/tests.rs:1	The test crate allows expect calls without clippy complaint.
+otel/tests/tests.rs:2	A blank line clears the lint from the modules.
+otel/tests/tests.rs:3	The harness module brings test machinery into view.
+otel/tests/tests.rs:4	The suite module gathers the telemetry cases.
+rustfmt.toml:1	Rustfmt is told this tree speaks the 2024 edition.
+rustfmt.toml:2	The comment warns that one formatting setting may complain.
+rustfmt.toml:3	The next comment points to the pull request that explains why.
+rustfmt.toml:4	Imports are split at item granularity.
+state/migrations/0011_logs_partition_prune_indexes.sql:1	Log lookups by thread receive a timestamp-descending index.
+state/migrations/0011_logs_partition_prune_indexes.sql:2	A blank line separates the two pruning paths.
+state/migrations/0011_logs_partition_prune_indexes.sql:3	Threadless process logs get their own descending timestamp index.
+state/migrations/0011_logs_partition_prune_indexes.sql:4	The index narrows itself to rows without a thread id.
+tui/tests/test_backend.rs:1	The wrapper points inward to the TUI test backend source.
+tui/tests/test_backend.rs:2	The inner module is named under that path.
+tui/tests/test_backend.rs:3	A blank line opens space before the re-export.
+tui/tests/test_backend.rs:4	VT100Backend is re-exported for integration tests to use.
+app-server-protocol/schema/json/AttestationGenerateParams.json:1	The attestation schema opens with a bare JSON doorway.
+app-server-protocol/schema/json/AttestationGenerateParams.json:2	Draft seven is named as the law this small shape follows.
+app-server-protocol/schema/json/AttestationGenerateParams.json:3	AttestationGenerateParams receives its title, a label for proof-making input.
+app-server-protocol/schema/json/AttestationGenerateParams.json:4	The schema says the payload is an object, a vessel with fields implied elsewhere.
+app-server-protocol/schema/json/AttestationGenerateParams.json:5	The brace closes the attestation contract.
+app-server-protocol/schema/json/v2/LogoutAccountResponse.json:1	The logout response schema opens its quiet object room.
+app-server-protocol/schema/json/v2/LogoutAccountResponse.json:2	The draft-seven URL pins the validator's compass.
+app-server-protocol/schema/json/v2/LogoutAccountResponse.json:3	LogoutAccountResponse is titled like a clean sign-off receipt.
+app-server-protocol/schema/json/v2/LogoutAccountResponse.json:4	Object type declares the response as a shaped envelope.
+app-server-protocol/schema/json/v2/LogoutAccountResponse.json:5	The closing brace ends the logout shape.
+app-server-protocol/schema/json/v2/McpServerRefreshResponse.json:1	The MCP refresh response opens with a simple brace.
+app-server-protocol/schema/json/v2/McpServerRefreshResponse.json:2	The schema URL sets draft seven beneath the refresh contract.
+app-server-protocol/schema/json/v2/McpServerRefreshResponse.json:3	McpServerRefreshResponse is named for a server made current again.
+app-server-protocol/schema/json/v2/McpServerRefreshResponse.json:4	The type remains object, a small box for the response.
+app-server-protocol/schema/json/v2/McpServerRefreshResponse.json:5	The final brace closes the refresh reply.
+app-server-protocol/schema/json/v2/ModelProviderCapabilitiesReadParams.json:1	The capabilities-read params schema starts with an opening brace.
+app-server-protocol/schema/json/v2/ModelProviderCapabilitiesReadParams.json:2	Draft seven supplies the grammar for this model-provider query.
+app-server-protocol/schema/json/v2/ModelProviderCapabilitiesReadParams.json:3	ModelProviderCapabilitiesReadParams names the request for reading provider powers.
+app-server-protocol/schema/json/v2/ModelProviderCapabilitiesReadParams.json:4	Object type gives the params their container.
+app-server-protocol/schema/json/v2/ModelProviderCapabilitiesReadParams.json:5	The brace closes the capabilities question.
+app-server-protocol/schema/json/v2/PluginShareDeleteResponse.json:1	The plugin-share delete response opens with JSON restraint.
+app-server-protocol/schema/json/v2/PluginShareDeleteResponse.json:2	The draft-seven schema line anchors deletion's reply.
+app-server-protocol/schema/json/v2/PluginShareDeleteResponse.json:3	PluginShareDeleteResponse is titled after a share removed from reach.
+app-server-protocol/schema/json/v2/PluginShareDeleteResponse.json:4	Object type leaves room for the response shape.
+app-server-protocol/schema/json/v2/PluginShareDeleteResponse.json:5	The closing brace seals the delete response.
+app-server-protocol/schema/json/v2/PluginShareListParams.json:1	The plugin-share list params open a compact schema block.
+app-server-protocol/schema/json/v2/PluginShareListParams.json:2	The schema URL keeps the list request in draft-seven order.
+app-server-protocol/schema/json/v2/PluginShareListParams.json:3	PluginShareListParams titles the request that asks which shares exist.
+app-server-protocol/schema/json/v2/PluginShareListParams.json:4	Object type gathers list parameters into one shape.
+app-server-protocol/schema/json/v2/PluginShareListParams.json:5	The final brace closes the list request.
+app-server-protocol/schema/json/v2/PluginUninstallResponse.json:1	The plugin uninstall response opens its schema shell.
+app-server-protocol/schema/json/v2/PluginUninstallResponse.json:2	Draft seven is cited before the plugin leaves.
+app-server-protocol/schema/json/v2/PluginUninstallResponse.json:3	PluginUninstallResponse names the receipt after removal.
+app-server-protocol/schema/json/v2/PluginUninstallResponse.json:4	Object type makes the uninstall reply a structured thing.
+app-server-protocol/schema/json/v2/PluginUninstallResponse.json:5	The brace closes the uninstall receipt.
+app-server-protocol/schema/json/v2/SkillsExtraRootsSetResponse.json:1	The extra-roots response begins with an opening brace.
+app-server-protocol/schema/json/v2/SkillsExtraRootsSetResponse.json:2	The draft-seven line sets the schema's footing.
+app-server-protocol/schema/json/v2/SkillsExtraRootsSetResponse.json:3	SkillsExtraRootsSetResponse titles the reply after roots are placed.
+app-server-protocol/schema/json/v2/SkillsExtraRootsSetResponse.json:4	Object type holds the outcome of changing skill roots.
+app-server-protocol/schema/json/v2/SkillsExtraRootsSetResponse.json:5	The closing brace ends the roots response.
+app-server-protocol/schema/json/v2/ThreadApproveGuardianDeniedActionResponse.json:1	The guardian-denied approval response opens a careful schema.
+app-server-protocol/schema/json/v2/ThreadApproveGuardianDeniedActionResponse.json:2	Draft seven stands behind the denied-action reply.
+app-server-protocol/schema/json/v2/ThreadApproveGuardianDeniedActionResponse.json:3	ThreadApproveGuardianDeniedActionResponse names the long edge of refusal.
+app-server-protocol/schema/json/v2/ThreadApproveGuardianDeniedActionResponse.json:4	Object type keeps that guardian response in a single vessel.
+app-server-protocol/schema/json/v2/ThreadApproveGuardianDeniedActionResponse.json:5	The final brace closes the denied-action answer.
+app-server-protocol/schema/json/v2/ThreadArchiveResponse.json:1	The thread archive response opens with a small brace.
+app-server-protocol/schema/json/v2/ThreadArchiveResponse.json:2	The draft-seven URL governs the archive reply.
+app-server-protocol/schema/json/v2/ThreadArchiveResponse.json:3	ThreadArchiveResponse titles the moment a conversation is shelved.
+app-server-protocol/schema/json/v2/ThreadArchiveResponse.json:4	Object type gives the archive result its shape.
+app-server-protocol/schema/json/v2/ThreadArchiveResponse.json:5	The brace closes the archive response.
+app-server-protocol/schema/json/v2/ThreadCompactStartResponse.json:1	The compact-start response opens, ready for a smaller history.
+app-server-protocol/schema/json/v2/ThreadCompactStartResponse.json:2	Draft seven supplies the schema for beginning compaction.
+app-server-protocol/schema/json/v2/ThreadCompactStartResponse.json:3	ThreadCompactStartResponse titles the reply when compression begins.
+app-server-protocol/schema/json/v2/ThreadCompactStartResponse.json:4	Object type frames the compact-start answer.
+app-server-protocol/schema/json/v2/ThreadCompactStartResponse.json:5	The closing brace finishes the compact-start contract.
+app-server-protocol/schema/json/v2/ThreadDeleteResponse.json:1	The thread delete response opens its JSON boundary.
+app-server-protocol/schema/json/v2/ThreadDeleteResponse.json:2	The draft-seven schema line steadies deletion's receipt.
+app-server-protocol/schema/json/v2/ThreadDeleteResponse.json:3	ThreadDeleteResponse names the answer after a thread is removed.
+app-server-protocol/schema/json/v2/ThreadDeleteResponse.json:4	Object type holds the delete result.
+app-server-protocol/schema/json/v2/ThreadDeleteResponse.json:5	The final brace closes the deleted thread's reply.
+app-server-protocol/schema/json/v2/ThreadInjectItemsResponse.json:1	The inject-items response opens with a plain brace.
+app-server-protocol/schema/json/v2/ThreadInjectItemsResponse.json:2	Draft seven gives the injected-items reply its formal grammar.
+app-server-protocol/schema/json/v2/ThreadInjectItemsResponse.json:3	ThreadInjectItemsResponse titles the answer after context is inserted.
+app-server-protocol/schema/json/v2/ThreadInjectItemsResponse.json:4	Object type makes the injection result a structured envelope.
+app-server-protocol/schema/json/v2/ThreadInjectItemsResponse.json:5	The closing brace seals the injection response.
+app-server-protocol/schema/json/v2/ThreadSetNameResponse.json:1	The set-name response schema opens the rename receipt.
+app-server-protocol/schema/json/v2/ThreadSetNameResponse.json:2	The draft-seven URL holds the title change to a known standard.
+app-server-protocol/schema/json/v2/ThreadSetNameResponse.json:3	ThreadSetNameResponse names the reply after a thread receives its label.
+app-server-protocol/schema/json/v2/ThreadSetNameResponse.json:4	Object type carries the result of naming.
+app-server-protocol/schema/json/v2/ThreadSetNameResponse.json:5	The final brace closes the set-name response.
+app-server-protocol/schema/json/v2/ThreadShellCommandResponse.json:1	The shell-command response opens its schema brace.
+app-server-protocol/schema/json/v2/ThreadShellCommandResponse.json:2	Draft seven sits beneath the command reply.
+app-server-protocol/schema/json/v2/ThreadShellCommandResponse.json:3	ThreadShellCommandResponse titles the answer from a thread's shell action.
+app-server-protocol/schema/json/v2/ThreadShellCommandResponse.json:4	Object type gives shell-command output a formal container.
+app-server-protocol/schema/json/v2/ThreadShellCommandResponse.json:5	The brace closes the shell command response.
+app-server-protocol/schema/json/v2/TurnInterruptResponse.json:1	The turn interrupt response opens with a terse brace.
+app-server-protocol/schema/json/v2/TurnInterruptResponse.json:2	The draft-seven schema line steadies the interrupted turn.
+app-server-protocol/schema/json/v2/TurnInterruptResponse.json:3	TurnInterruptResponse names the reply when work is stopped midstream.
+app-server-protocol/schema/json/v2/TurnInterruptResponse.json:4	Object type contains the interruption answer.
+app-server-protocol/schema/json/v2/TurnInterruptResponse.json:5	The closing brace lets the interrupted turn rest.
+app-server-protocol/schema/typescript/AgentMessageInputContent.ts:1	The generated banner guards agent message input from human edits.
+app-server-protocol/schema/typescript/AgentMessageInputContent.ts:2	A blank line gives the warning room to stand.
+app-server-protocol/schema/typescript/AgentMessageInputContent.ts:3	The ts-rs signature tells which forge produced the content type.
+app-server-protocol/schema/typescript/AgentMessageInputContent.ts:4	A second blank breath separates provenance from shape.
+app-server-protocol/schema/typescript/AgentMessageInputContent.ts:5	Agent message input becomes either plain text or sealed encrypted content.
+app-server-protocol/schema/typescript/AgentPath.ts:1	The generated banner keeps the agent path alias untouched.
+app-server-protocol/schema/typescript/AgentPath.ts:2	A blank line rests between command and provenance.
+app-server-protocol/schema/typescript/AgentPath.ts:3	The ts-rs note names the machine that wrote AgentPath.
+app-server-protocol/schema/typescript/AgentPath.ts:4	A blank line clears the way for the alias.
+app-server-protocol/schema/typescript/AgentPath.ts:5	AgentPath is simply a string, a route held in type form.
+app-server-protocol/schema/typescript/AmazonBedrockCredentialSource.ts:1	The generated banner warns against hand-editing credential sources.
+app-server-protocol/schema/typescript/AmazonBedrockCredentialSource.ts:2	A blank line keeps the warning from the generator mark.
+app-server-protocol/schema/typescript/AmazonBedrockCredentialSource.ts:3	The ts-rs line records the origin of the Bedrock credential union.
+app-server-protocol/schema/typescript/AmazonBedrockCredentialSource.ts:4	A blank line precedes the allowed source names.
+app-server-protocol/schema/typescript/AmazonBedrockCredentialSource.ts:5	Bedrock credentials may be Codex-managed or AWS-managed.
+app-server-protocol/schema/typescript/ClientInfo.ts:1	The generated banner stands over the client info record.
+app-server-protocol/schema/typescript/ClientInfo.ts:2	A blank line gives the generated warning a clean margin.
+app-server-protocol/schema/typescript/ClientInfo.ts:3	The ts-rs note marks ClientInfo as exported from Rust shape.
+app-server-protocol/schema/typescript/ClientInfo.ts:4	A blank line opens before the fields.
+app-server-protocol/schema/typescript/ClientInfo.ts:5	ClientInfo carries name, optional title, and version in one object.
+app-server-protocol/schema/typescript/ClientNotification.ts:1	The generated banner guards the client notification method.
+app-server-protocol/schema/typescript/ClientNotification.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/ClientNotification.ts:3	The ts-rs provenance line names the generator.
+app-server-protocol/schema/typescript/ClientNotification.ts:4	A blank line pauses before the one notification.
+app-server-protocol/schema/typescript/ClientNotification.ts:5	ClientNotification says initialized, a small method-shaped handshake.
+app-server-protocol/schema/typescript/ConversationGitInfo.ts:1	The generated banner watches over conversation Git metadata.
+app-server-protocol/schema/typescript/ConversationGitInfo.ts:2	A blank line leaves the warning un crowded.
+app-server-protocol/schema/typescript/ConversationGitInfo.ts:3	The ts-rs line tells how the Git info shape arrived.
+app-server-protocol/schema/typescript/ConversationGitInfo.ts:4	A blank line clears the export's path.
+app-server-protocol/schema/typescript/ConversationGitInfo.ts:5	ConversationGitInfo holds optional sha, branch, and origin URL.
+app-server-protocol/schema/typescript/ConversationTextRole.ts:1	The generated banner protects the conversation role list.
+app-server-protocol/schema/typescript/ConversationTextRole.ts:2	A blank line rests below the warning.
+app-server-protocol/schema/typescript/ConversationTextRole.ts:3	The ts-rs note signs the role union's birth certificate.
+app-server-protocol/schema/typescript/ConversationTextRole.ts:4	A blank line opens before the names.
+app-server-protocol/schema/typescript/ConversationTextRole.ts:5	Conversation text can speak as user, developer, or assistant.
+app-server-protocol/schema/typescript/FileChange.ts:1	The generated banner tells hands away from file changes.
+app-server-protocol/schema/typescript/FileChange.ts:2	A blank line lets the generated rule breathe.
+app-server-protocol/schema/typescript/FileChange.ts:3	The ts-rs note explains the file-change union's source.
+app-server-protocol/schema/typescript/FileChange.ts:4	A blank line stands before add, delete, and update.
+app-server-protocol/schema/typescript/FileChange.ts:5	FileChange branches into add, delete, or update with a possible move path.
+app-server-protocol/schema/typescript/ForcedLoginMethod.ts:1	The generated banner guards the forced-login choices.
+app-server-protocol/schema/typescript/ForcedLoginMethod.ts:2	A blank line separates warning from generator.
+app-server-protocol/schema/typescript/ForcedLoginMethod.ts:3	The ts-rs provenance line marks the login method union.
+app-server-protocol/schema/typescript/ForcedLoginMethod.ts:4	A blank line waits before the options.
+app-server-protocol/schema/typescript/ForcedLoginMethod.ts:5	Forced login chooses between ChatGPT and API.
+app-server-protocol/schema/typescript/FuzzyFileSearchMatchType.ts:1	The generated banner stands over fuzzy search match kinds.
+app-server-protocol/schema/typescript/FuzzyFileSearchMatchType.ts:2	A blank line gives the banner a quiet floor.
+app-server-protocol/schema/typescript/FuzzyFileSearchMatchType.ts:3	The ts-rs line records the match type's generated origin.
+app-server-protocol/schema/typescript/FuzzyFileSearchMatchType.ts:4	A blank line clears the export.
+app-server-protocol/schema/typescript/FuzzyFileSearchMatchType.ts:5	Fuzzy search can match a file or a directory.
+app-server-protocol/schema/typescript/FuzzyFileSearchParams.ts:1	The generated banner protects fuzzy search parameters.
+app-server-protocol/schema/typescript/FuzzyFileSearchParams.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/FuzzyFileSearchParams.ts:3	The ts-rs line signs the search params as generated.
+app-server-protocol/schema/typescript/FuzzyFileSearchParams.ts:4	A blank line opens before the query object.
+app-server-protocol/schema/typescript/FuzzyFileSearchParams.ts:5	Fuzzy search params carry query, roots, and an optional cancellation token.
+app-server-protocol/schema/typescript/FuzzyFileSearchSessionCompletedNotification.ts:1	The generated banner guards completion notification shape.
+app-server-protocol/schema/typescript/FuzzyFileSearchSessionCompletedNotification.ts:2	A blank line lets the warning stand alone.
+app-server-protocol/schema/typescript/FuzzyFileSearchSessionCompletedNotification.ts:3	The ts-rs note names the generator for the completion notice.
+app-server-protocol/schema/typescript/FuzzyFileSearchSessionCompletedNotification.ts:4	A blank line leads into the payload.
+app-server-protocol/schema/typescript/FuzzyFileSearchSessionCompletedNotification.ts:5	The completed notification carries only its session id.
+app-server-protocol/schema/typescript/GetAuthStatusParams.ts:1	The generated banner warns against editing auth status params.
+app-server-protocol/schema/typescript/GetAuthStatusParams.ts:2	A blank line separates command from credit.
+app-server-protocol/schema/typescript/GetAuthStatusParams.ts:3	The ts-rs line records the auth params' generated source.
+app-server-protocol/schema/typescript/GetAuthStatusParams.ts:4	A blank line waits before the booleans.
+app-server-protocol/schema/typescript/GetAuthStatusParams.ts:5	Auth status params ask whether to include or refresh a token.
+app-server-protocol/schema/typescript/GitDiffToRemoteParams.ts:1	The generated banner watches over remote diff params.
+app-server-protocol/schema/typescript/GitDiffToRemoteParams.ts:2	A blank line follows the warning's edge.
+app-server-protocol/schema/typescript/GitDiffToRemoteParams.ts:3	The ts-rs provenance line signs the remote diff request.
+app-server-protocol/schema/typescript/GitDiffToRemoteParams.ts:4	A blank line opens before the working directory.
+app-server-protocol/schema/typescript/GitDiffToRemoteParams.ts:5	GitDiffToRemoteParams carries cwd, the place from which comparison begins.
+app-server-protocol/schema/typescript/GitSha.ts:1	The generated banner guards the Git SHA alias.
+app-server-protocol/schema/typescript/GitSha.ts:2	A blank line gives the banner space.
+app-server-protocol/schema/typescript/GitSha.ts:3	The ts-rs line says the SHA alias came from Rust.
+app-server-protocol/schema/typescript/GitSha.ts:4	A blank line clears the alias.
+app-server-protocol/schema/typescript/GitSha.ts:5	GitSha is a string, the commit name kept lean.
+app-server-protocol/schema/typescript/ImageDetail.ts:1	The generated banner protects image detail levels.
+app-server-protocol/schema/typescript/ImageDetail.ts:2	A blank line rests under the warning.
+app-server-protocol/schema/typescript/ImageDetail.ts:3	The ts-rs provenance line marks the image-detail union.
+app-server-protocol/schema/typescript/ImageDetail.ts:4	A blank line sets off the choices.
+app-server-protocol/schema/typescript/ImageDetail.ts:5	ImageDetail spans auto, low, high, and original.
+app-server-protocol/schema/typescript/InternalSessionSource.ts:1	The generated banner watches the internal session source.
+app-server-protocol/schema/typescript/InternalSessionSource.ts:2	A blank line separates warning and origin.
+app-server-protocol/schema/typescript/InternalSessionSource.ts:3	The ts-rs line records this internal source as generated.
+app-server-protocol/schema/typescript/InternalSessionSource.ts:4	A blank line opens before the lone value.
+app-server-protocol/schema/typescript/InternalSessionSource.ts:5	InternalSessionSource names memory consolidation as its single source.
+app-server-protocol/schema/typescript/LocalShellExecAction.ts:1	The generated banner guards local shell exec action.
+app-server-protocol/schema/typescript/LocalShellExecAction.ts:2	A blank line follows the no-edit command.
+app-server-protocol/schema/typescript/LocalShellExecAction.ts:3	The ts-rs note marks the shell action object as generated.
+app-server-protocol/schema/typescript/LocalShellExecAction.ts:4	A blank line gives the long object room.
+app-server-protocol/schema/typescript/LocalShellExecAction.ts:5	LocalShellExecAction gathers command, timeout, directory, env, and user.
+app-server-protocol/schema/typescript/LocalShellStatus.ts:1	The generated banner protects local shell status values.
+app-server-protocol/schema/typescript/LocalShellStatus.ts:2	A blank line leaves the warning clean.
+app-server-protocol/schema/typescript/LocalShellStatus.ts:3	The ts-rs line signs the status union.
+app-server-protocol/schema/typescript/LocalShellStatus.ts:4	A blank line opens before the lifecycle names.
+app-server-protocol/schema/typescript/LocalShellStatus.ts:5	LocalShellStatus can be completed, in progress, or incomplete.
+app-server-protocol/schema/typescript/NetworkPolicyRuleAction.ts:1	The generated banner stands over network policy actions.
+app-server-protocol/schema/typescript/NetworkPolicyRuleAction.ts:2	A blank line separates warning from generator.
+app-server-protocol/schema/typescript/NetworkPolicyRuleAction.ts:3	The ts-rs line records the policy action union's origin.
+app-server-protocol/schema/typescript/NetworkPolicyRuleAction.ts:4	A blank line clears the way for the verdicts.
+app-server-protocol/schema/typescript/NetworkPolicyRuleAction.ts:5	Network policy action chooses allow or deny.
+app-server-protocol/schema/typescript/Personality.ts:1	The generated banner keeps the personality union machine-owned.
+app-server-protocol/schema/typescript/Personality.ts:2	A blank line gives the warning its margin.
+app-server-protocol/schema/typescript/Personality.ts:3	The ts-rs line records where Personality was shaped.
+app-server-protocol/schema/typescript/Personality.ts:4	A blank line waits before the possible tones.
+app-server-protocol/schema/typescript/Personality.ts:5	Personality can be none, friendly, or pragmatic.
+app-server-protocol/schema/typescript/PlanType.ts:1	The generated banner stands over the plan-type catalog.
+app-server-protocol/schema/typescript/PlanType.ts:2	A blank line separates command from provenance.
+app-server-protocol/schema/typescript/PlanType.ts:3	The ts-rs line names the generator behind PlanType.
+app-server-protocol/schema/typescript/PlanType.ts:4	A blank line opens before the subscription names.
+app-server-protocol/schema/typescript/PlanType.ts:5	PlanType gathers free, paid, business, enterprise, education, and unknown tiers.
+app-server-protocol/schema/typescript/RealtimeConversationVersion.ts:1	The generated banner guards realtime conversation versions.
+app-server-protocol/schema/typescript/RealtimeConversationVersion.ts:2	A blank line keeps the warning clean.
+app-server-protocol/schema/typescript/RealtimeConversationVersion.ts:3	The ts-rs note marks the version union's generated source.
+app-server-protocol/schema/typescript/RealtimeConversationVersion.ts:4	A blank line precedes the version choices.
+app-server-protocol/schema/typescript/RealtimeConversationVersion.ts:5	RealtimeConversationVersion chooses v1 or v2.
+app-server-protocol/schema/typescript/RealtimeOutputModality.ts:1	The generated banner protects realtime output modes.
+app-server-protocol/schema/typescript/RealtimeOutputModality.ts:2	A blank line rests below the warning.
+app-server-protocol/schema/typescript/RealtimeOutputModality.ts:3	The ts-rs line signs the modality union.
+app-server-protocol/schema/typescript/RealtimeOutputModality.ts:4	A blank line opens before the senses.
+app-server-protocol/schema/typescript/RealtimeOutputModality.ts:5	Realtime output may arrive as text or audio.
+app-server-protocol/schema/typescript/RealtimeVoice.ts:1	The generated banner stands over the realtime voice list.
+app-server-protocol/schema/typescript/RealtimeVoice.ts:2	A blank line separates warning and origin.
+app-server-protocol/schema/typescript/RealtimeVoice.ts:3	The ts-rs line records how the voice list was emitted.
+app-server-protocol/schema/typescript/RealtimeVoice.ts:4	A blank line gives the chorus room.
+app-server-protocol/schema/typescript/RealtimeVoice.ts:5	RealtimeVoice strings together many named voices from alloy to verse.
+app-server-protocol/schema/typescript/ReasoningItemContent.ts:1	The generated banner guards reasoning item content.
+app-server-protocol/schema/typescript/ReasoningItemContent.ts:2	A blank line leaves the no-edit sign alone.
+app-server-protocol/schema/typescript/ReasoningItemContent.ts:3	The ts-rs provenance line signs the reasoning content union.
+app-server-protocol/schema/typescript/ReasoningItemContent.ts:4	A blank line clears the route to the variants.
+app-server-protocol/schema/typescript/ReasoningItemContent.ts:5	Reasoning item content may be reasoning text or ordinary text.
+app-server-protocol/schema/typescript/ReasoningItemReasoningSummary.ts:1	The generated banner watches the reasoning summary shape.
+app-server-protocol/schema/typescript/ReasoningItemReasoningSummary.ts:2	A blank line gives the warning space.
+app-server-protocol/schema/typescript/ReasoningItemReasoningSummary.ts:3	The ts-rs line marks the summary type as generated.
+app-server-protocol/schema/typescript/ReasoningItemReasoningSummary.ts:4	A blank line precedes the summary payload.
+app-server-protocol/schema/typescript/ReasoningItemReasoningSummary.ts:5	The reasoning summary carries summary_text and its text.
+app-server-protocol/schema/typescript/RequestId.ts:1	The generated banner protects request identifiers.
+app-server-protocol/schema/typescript/RequestId.ts:2	A blank line separates warning from credit.
+app-server-protocol/schema/typescript/RequestId.ts:3	The ts-rs line records the request id alias origin.
+app-server-protocol/schema/typescript/RequestId.ts:4	A blank line opens before the alias.
+app-server-protocol/schema/typescript/RequestId.ts:5	RequestId accepts either a string or a number.
+app-server-protocol/schema/typescript/ThreadId.ts:1	The generated banner stands over thread identifiers.
+app-server-protocol/schema/typescript/ThreadId.ts:2	A blank line follows the no-edit command.
+app-server-protocol/schema/typescript/ThreadId.ts:3	The ts-rs note signs the ThreadId alias.
+app-server-protocol/schema/typescript/ThreadId.ts:4	A blank line clears the export.
+app-server-protocol/schema/typescript/ThreadId.ts:5	ThreadId is a string, the conversation's handle.
+app-server-protocol/schema/typescript/ThreadMemoryMode.ts:1	The generated banner guards thread memory mode.
+app-server-protocol/schema/typescript/ThreadMemoryMode.ts:2	A blank line lets the warning breathe.
+app-server-protocol/schema/typescript/ThreadMemoryMode.ts:3	The ts-rs line records the memory mode union.
+app-server-protocol/schema/typescript/ThreadMemoryMode.ts:4	A blank line waits before the switch.
+app-server-protocol/schema/typescript/ThreadMemoryMode.ts:5	Thread memory mode is either enabled or disabled.
+app-server-protocol/schema/typescript/WebSearchAction.ts:1	The generated banner protects web search actions.
+app-server-protocol/schema/typescript/WebSearchAction.ts:2	A blank line separates warning and generator.
+app-server-protocol/schema/typescript/WebSearchAction.ts:3	The ts-rs note marks the web action union.
+app-server-protocol/schema/typescript/WebSearchAction.ts:4	A blank line opens before search, open, find, and other.
+app-server-protocol/schema/typescript/WebSearchAction.ts:5	WebSearchAction spans search, page opening, page finding, and other work.
+app-server-protocol/schema/typescript/WebSearchContextSize.ts:1	The generated banner watches web search context size.
+app-server-protocol/schema/typescript/WebSearchContextSize.ts:2	A blank line leaves the warning distinct.
+app-server-protocol/schema/typescript/WebSearchContextSize.ts:3	The ts-rs line records the context-size union.
+app-server-protocol/schema/typescript/WebSearchContextSize.ts:4	A blank line clears the scale.
+app-server-protocol/schema/typescript/WebSearchContextSize.ts:5	Web search context size ranges from low to medium to high.
+app-server-protocol/schema/typescript/WebSearchLocation.ts:1	The generated banner guards web search location shape.
+app-server-protocol/schema/typescript/WebSearchLocation.ts:2	A blank line keeps the warning readable.
+app-server-protocol/schema/typescript/WebSearchLocation.ts:3	The ts-rs line signs the location object.
+app-server-protocol/schema/typescript/WebSearchLocation.ts:4	A blank line opens before geography.
+app-server-protocol/schema/typescript/WebSearchLocation.ts:5	WebSearchLocation holds optional country, region, city, and timezone.
+app-server-protocol/schema/typescript/WebSearchMode.ts:1	The generated banner protects web search mode.
+app-server-protocol/schema/typescript/WebSearchMode.ts:2	A blank line rests beneath the warning.
+app-server-protocol/schema/typescript/WebSearchMode.ts:3	The ts-rs line records the mode union's source.
+app-server-protocol/schema/typescript/WebSearchMode.ts:4	A blank line clears the choices.
+app-server-protocol/schema/typescript/WebSearchMode.ts:5	Web search mode can be disabled, cached, indexed, or live.
+app-server-protocol/schema/typescript/serde_json/JsonValue.ts:1	The generated banner stands over recursive JSON value.
+app-server-protocol/schema/typescript/serde_json/JsonValue.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/serde_json/JsonValue.ts:3	The ts-rs note marks JsonValue as generated.
+app-server-protocol/schema/typescript/serde_json/JsonValue.ts:4	A blank line opens before the recursive union.
+app-server-protocol/schema/typescript/serde_json/JsonValue.ts:5	JsonValue may be scalar, array, object, or null.
+app-server-protocol/schema/typescript/v2/AccountLoginCompletedNotification.ts:1	The generated banner guards account-login completion.
+app-server-protocol/schema/typescript/v2/AccountLoginCompletedNotification.ts:2	A blank line leaves the warning room.
+app-server-protocol/schema/typescript/v2/AccountLoginCompletedNotification.ts:3	The ts-rs line records the notification's generated origin.
+app-server-protocol/schema/typescript/v2/AccountLoginCompletedNotification.ts:4	A blank line precedes the login result.
+app-server-protocol/schema/typescript/v2/AccountLoginCompletedNotification.ts:5	Account login completion carries id, success, and optional error.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageDailyBucket.ts:1	The generated banner protects the daily usage bucket.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageDailyBucket.ts:2	A blank line separates command and provenance.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageDailyBucket.ts:3	The ts-rs note signs the usage bucket object.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageDailyBucket.ts:4	A blank line opens before date and tokens.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageDailyBucket.ts:5	The daily bucket holds a start date and token count.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageSummary.ts:1	The generated banner watches the account usage summary.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageSummary.ts:2	A blank line gives the warning a clean edge.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageSummary.ts:3	The ts-rs line records the summary object's source.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageSummary.ts:4	A blank line makes space for the long tally.
+app-server-protocol/schema/typescript/v2/AccountTokenUsageSummary.ts:5	The usage summary totals lifetime, peaks, long turns, and streaks.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeCreditType.ts:1	The generated banner protects add-credits nudge credit kinds.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeCreditType.ts:2	A blank line keeps warning and origin apart.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeCreditType.ts:3	The ts-rs line signs the credit-type union.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeCreditType.ts:4	A blank line opens before the two kinds.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeCreditType.ts:5	The nudge credit type chooses credits or usage limit.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeEmailStatus.ts:1	The generated banner guards add-credits email status.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeEmailStatus.ts:2	A blank line rests below the warning.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeEmailStatus.ts:3	The ts-rs note records the email status union.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeEmailStatus.ts:4	A blank line clears the verdicts.
+app-server-protocol/schema/typescript/v2/AddCreditsNudgeEmailStatus.ts:5	The email status is sent or cooling down.
+app-server-protocol/schema/typescript/v2/AdditionalContextKind.ts:1	The generated banner guards additional context kinds.
+app-server-protocol/schema/typescript/v2/AdditionalContextKind.ts:2	A blank line gives the warning its own air.
+app-server-protocol/schema/typescript/v2/AdditionalContextKind.ts:3	The ts-rs line records the context-kind union's origin.
+app-server-protocol/schema/typescript/v2/AdditionalContextKind.ts:4	A blank line waits before the trust boundary.
+app-server-protocol/schema/typescript/v2/AdditionalContextKind.ts:5	Additional context is either untrusted or application-provided.
+app-server-protocol/schema/typescript/v2/AdditionalNetworkPermissions.ts:1	The generated banner protects additional network permissions.
+app-server-protocol/schema/typescript/v2/AdditionalNetworkPermissions.ts:2	A blank line separates warning from provenance.
+app-server-protocol/schema/typescript/v2/AdditionalNetworkPermissions.ts:3	The ts-rs note signs the network permissions object.
+app-server-protocol/schema/typescript/v2/AdditionalNetworkPermissions.ts:4	A blank line opens before the flag.
+app-server-protocol/schema/typescript/v2/AdditionalNetworkPermissions.ts:5	Additional network permissions hold an optional enabled switch.
+app-server-protocol/schema/typescript/v2/AgentMessageDeltaNotification.ts:1	The generated banner watches agent message deltas.
+app-server-protocol/schema/typescript/v2/AgentMessageDeltaNotification.ts:2	A blank line lets the warning stand apart.
+app-server-protocol/schema/typescript/v2/AgentMessageDeltaNotification.ts:3	The ts-rs line records the delta notification's source.
+app-server-protocol/schema/typescript/v2/AgentMessageDeltaNotification.ts:4	A blank line opens before identifiers and text.
+app-server-protocol/schema/typescript/v2/AgentMessageDeltaNotification.ts:5	Agent message deltas carry thread, turn, item, and delta text.
+app-server-protocol/schema/typescript/v2/AppReview.ts:1	The generated banner guards app review status.
+app-server-protocol/schema/typescript/v2/AppReview.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/v2/AppReview.ts:3	The ts-rs note records the app review object's origin.
+app-server-protocol/schema/typescript/v2/AppReview.ts:4	A blank line clears the one-field review.
+app-server-protocol/schema/typescript/v2/AppReview.ts:5	AppReview holds a status string, concise and decisive.
+app-server-protocol/schema/typescript/v2/AppScreenshot.ts:1	The generated banner protects app screenshot metadata.
+app-server-protocol/schema/typescript/v2/AppScreenshot.ts:2	A blank line separates warning and generator.
+app-server-protocol/schema/typescript/v2/AppScreenshot.ts:3	The ts-rs line signs the screenshot object.
+app-server-protocol/schema/typescript/v2/AppScreenshot.ts:4	A blank line opens before image pointers.
+app-server-protocol/schema/typescript/v2/AppScreenshot.ts:5	AppScreenshot carries optional URL, optional file id, and user prompt.
+app-server-protocol/schema/typescript/v2/AppTemplateUnavailableReason.ts:1	The generated banner guards unavailable template reasons.
+app-server-protocol/schema/typescript/v2/AppTemplateUnavailableReason.ts:2	A blank line leaves the warning clear.
+app-server-protocol/schema/typescript/v2/AppTemplateUnavailableReason.ts:3	The ts-rs note records the reason union.
+app-server-protocol/schema/typescript/v2/AppTemplateUnavailableReason.ts:4	A blank line precedes the two absence causes.
+app-server-protocol/schema/typescript/v2/AppTemplateUnavailableReason.ts:5	App templates may be unavailable from missing setup or workspace.
+app-server-protocol/schema/typescript/v2/AppToolApproval.ts:1	The generated banner protects app tool approval modes.
+app-server-protocol/schema/typescript/v2/AppToolApproval.ts:2	A blank line separates command and origin.
+app-server-protocol/schema/typescript/v2/AppToolApproval.ts:3	The ts-rs line signs the approval union.
+app-server-protocol/schema/typescript/v2/AppToolApproval.ts:4	A blank line clears the approval choices.
+app-server-protocol/schema/typescript/v2/AppToolApproval.ts:5	App tool approval can be automatic, prompted, or approved.
+app-server-protocol/schema/typescript/v2/AskForApproval.ts:1	The generated banner watches the approval policy type.
+app-server-protocol/schema/typescript/v2/AskForApproval.ts:2	A blank line gives the warning a clean edge.
+app-server-protocol/schema/typescript/v2/AskForApproval.ts:3	The ts-rs line records the approval policy union.
+app-server-protocol/schema/typescript/v2/AskForApproval.ts:4	A blank line opens before simple and granular modes.
+app-server-protocol/schema/typescript/v2/AskForApproval.ts:5	AskForApproval spans fixed policies and a granular permission map.
+app-server-protocol/schema/typescript/v2/AttestationGenerateParams.ts:1	The generated banner guards v2 attestation params.
+app-server-protocol/schema/typescript/v2/AttestationGenerateParams.ts:2	A blank line keeps warning and origin apart.
+app-server-protocol/schema/typescript/v2/AttestationGenerateParams.ts:3	The ts-rs note records the v2 attestation shape.
+app-server-protocol/schema/typescript/v2/AttestationGenerateParams.ts:4	A blank line waits before the empty record.
+app-server-protocol/schema/typescript/v2/AttestationGenerateParams.ts:5	Attestation generation takes no named fields.
+app-server-protocol/schema/typescript/v2/ByteRange.ts:1	The generated banner protects byte ranges.
+app-server-protocol/schema/typescript/v2/ByteRange.ts:2	A blank line follows the no-edit sign.
+app-server-protocol/schema/typescript/v2/ByteRange.ts:3	The ts-rs line records the range object.
+app-server-protocol/schema/typescript/v2/ByteRange.ts:4	A blank line opens before the bounds.
+app-server-protocol/schema/typescript/v2/ByteRange.ts:5	ByteRange holds a start and an end.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountParams.ts:1	The generated banner guards cancel-login params.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountParams.ts:2	A blank line gives the warning room.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountParams.ts:3	The ts-rs note signs the cancel-login object.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountParams.ts:4	A blank line clears the single identifier.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountParams.ts:5	Cancel-login params carry the login id to stop.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountStatus.ts:1	The generated banner watches cancel-login status.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountStatus.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountStatus.ts:3	The ts-rs line records the cancel status union.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountStatus.ts:4	A blank line opens before the outcomes.
+app-server-protocol/schema/typescript/v2/CancelLoginAccountStatus.ts:5	Cancel-login status is canceled or not found.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshReason.ts:1	The generated banner protects refresh reasons.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshReason.ts:2	A blank line leaves the warning readable.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshReason.ts:3	The ts-rs note records the reason union.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshReason.ts:4	A blank line waits before the lone cause.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshReason.ts:5	ChatGPT token refresh reason is unauthorized.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshResponse.ts:1	The generated banner guards token refresh responses.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshResponse.ts:2	A blank line keeps the warning distinct.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshResponse.ts:3	The ts-rs line signs the refresh response object.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshResponse.ts:4	A blank line opens before tokens and account.
+app-server-protocol/schema/typescript/v2/ChatgptAuthTokensRefreshResponse.ts:5	The refresh response carries access token, account id, and optional plan.
+app-server-protocol/schema/typescript/v2/CollabAgentStatus.ts:1	The generated banner protects collaboration agent statuses.
+app-server-protocol/schema/typescript/v2/CollabAgentStatus.ts:2	A blank line separates warning and provenance.
+app-server-protocol/schema/typescript/v2/CollabAgentStatus.ts:3	The ts-rs note records the agent status union.
+app-server-protocol/schema/typescript/v2/CollabAgentStatus.ts:4	A blank line clears the lifecycle list.
+app-server-protocol/schema/typescript/v2/CollabAgentStatus.ts:5	Collab agent status spans init, running, stopped, errors, shutdown, and absence.
+app-server-protocol/schema/typescript/v2/CollabAgentTool.ts:1	The generated banner guards collaboration agent tools.
+app-server-protocol/schema/typescript/v2/CollabAgentTool.ts:2	A blank line rests below the warning.
+app-server-protocol/schema/typescript/v2/CollabAgentTool.ts:3	The ts-rs line records the tool union.
+app-server-protocol/schema/typescript/v2/CollabAgentTool.ts:4	A blank line opens before the tool names.
+app-server-protocol/schema/typescript/v2/CollabAgentTool.ts:5	Collab agent tools can spawn, send input, resume, wait, or close.
+app-server-protocol/schema/typescript/v2/CollabAgentToolCallStatus.ts:1	The generated banner protects collaboration tool-call status.
+app-server-protocol/schema/typescript/v2/CollabAgentToolCallStatus.ts:2	A blank line gives the warning space.
+app-server-protocol/schema/typescript/v2/CollabAgentToolCallStatus.ts:3	The ts-rs note signs the tool-call status union.
+app-server-protocol/schema/typescript/v2/CollabAgentToolCallStatus.ts:4	A blank line clears the three states.
+app-server-protocol/schema/typescript/v2/CollabAgentToolCallStatus.ts:5	Tool calls are in progress, completed, or failed.
+app-server-protocol/schema/typescript/v2/CommandExecutionOutputDeltaNotification.ts:1	The generated banner guards command output deltas.
+app-server-protocol/schema/typescript/v2/CommandExecutionOutputDeltaNotification.ts:2	A blank line separates warning from generator.
+app-server-protocol/schema/typescript/v2/CommandExecutionOutputDeltaNotification.ts:3	The ts-rs line records the command delta notification.
+app-server-protocol/schema/typescript/v2/CommandExecutionOutputDeltaNotification.ts:4	A blank line opens before the stream coordinates.
+app-server-protocol/schema/typescript/v2/CommandExecutionOutputDeltaNotification.ts:5	Command output deltas carry thread, turn, item, and text delta.
+app-server-protocol/schema/typescript/v2/CommandExecutionSource.ts:1	The generated banner watches command execution sources.
+app-server-protocol/schema/typescript/v2/CommandExecutionSource.ts:2	A blank line leaves the warning clean.
+app-server-protocol/schema/typescript/v2/CommandExecutionSource.ts:3	The ts-rs note records the source union.
+app-server-protocol/schema/typescript/v2/CommandExecutionSource.ts:4	A blank line opens before agent, shell, and unified exec paths.
+app-server-protocol/schema/typescript/v2/CommandExecutionSource.ts:5	Command execution source names agent, user shell, startup, or interaction.
+app-server-protocol/schema/typescript/v2/CommandExecutionStatus.ts:1	The generated banner protects command execution status.
+app-server-protocol/schema/typescript/v2/CommandExecutionStatus.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/v2/CommandExecutionStatus.ts:3	The ts-rs line records the command status union.
+app-server-protocol/schema/typescript/v2/CommandExecutionStatus.ts:4	A blank line clears the state list.
+app-server-protocol/schema/typescript/v2/CommandExecutionStatus.ts:5	Command execution may be in progress, completed, failed, or declined.
+app-server-protocol/schema/typescript/v2/CommandMigration.ts:1	The generated banner guards command migration names.
+app-server-protocol/schema/typescript/v2/CommandMigration.ts:2	A blank line leaves the warning un crowded.
+app-server-protocol/schema/typescript/v2/CommandMigration.ts:3	The ts-rs line records the command migration object.
+app-server-protocol/schema/typescript/v2/CommandMigration.ts:4	A blank line opens before the migration label.
+app-server-protocol/schema/typescript/v2/CommandMigration.ts:5	CommandMigration carries the command name to move forward.
+app-server-protocol/schema/typescript/v2/ComputerUseRequirements.ts:1	The generated banner protects computer-use requirements.
+app-server-protocol/schema/typescript/v2/ComputerUseRequirements.ts:2	A blank line separates command from provenance.
+app-server-protocol/schema/typescript/v2/ComputerUseRequirements.ts:3	The ts-rs note signs the computer-use object.
+app-server-protocol/schema/typescript/v2/ComputerUseRequirements.ts:4	A blank line waits before the locked-computer flag.
+app-server-protocol/schema/typescript/v2/ComputerUseRequirements.ts:5	Computer-use requirements may allow locked computer use.
+app-server-protocol/schema/typescript/v2/ConfiguredHookHandler.ts:1	The generated banner watches configured hook handlers.
+app-server-protocol/schema/typescript/v2/ConfiguredHookHandler.ts:2	A blank line lets the warning stand apart.
+app-server-protocol/schema/typescript/v2/ConfiguredHookHandler.ts:3	The ts-rs line records the handler union.
+app-server-protocol/schema/typescript/v2/ConfiguredHookHandler.ts:4	A blank line opens before command, prompt, and agent variants.
+app-server-protocol/schema/typescript/v2/ConfiguredHookHandler.ts:5	Configured hooks may run commands, prompt, or call an agent.
+app-server-protocol/schema/typescript/v2/ConsumeAccountRateLimitResetCreditOutcome.ts:1	The generated banner guards reset-credit outcomes.
+app-server-protocol/schema/typescript/v2/ConsumeAccountRateLimitResetCreditOutcome.ts:2	A blank line leaves the warning clean.
+app-server-protocol/schema/typescript/v2/ConsumeAccountRateLimitResetCreditOutcome.ts:3	The ts-rs note records the reset-credit union.
+app-server-protocol/schema/typescript/v2/ConsumeAccountRateLimitResetCreditOutcome.ts:4	A blank line clears the possible results.
+app-server-protocol/schema/typescript/v2/ConsumeAccountRateLimitResetCreditOutcome.ts:5	Consuming a reset credit may reset, do nothing, lack credit, or already be redeemed.
+app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts:1	The generated banner protects credit snapshots.
+app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts:3	The ts-rs line signs the credits object.
+app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts:4	A blank line opens before the balance fields.
+app-server-protocol/schema/typescript/v2/CreditsSnapshot.ts:5	CreditsSnapshot records whether credits exist, are unlimited, and their balance.
+app-server-protocol/schema/typescript/v2/DynamicToolCallOutputContentItem.ts:1	The generated banner guards dynamic tool output content.
+app-server-protocol/schema/typescript/v2/DynamicToolCallOutputContentItem.ts:2	A blank line gives the warning room.
+app-server-protocol/schema/typescript/v2/DynamicToolCallOutputContentItem.ts:3	The ts-rs line records the output-content union.
+app-server-protocol/schema/typescript/v2/DynamicToolCallOutputContentItem.ts:4	A blank line clears the text and image variants.
+app-server-protocol/schema/typescript/v2/DynamicToolCallOutputContentItem.ts:5	Dynamic tool output content is input text or an input image URL.
+app-server-protocol/schema/typescript/v2/DynamicToolCallStatus.ts:1	The generated banner protects dynamic tool call status.
+app-server-protocol/schema/typescript/v2/DynamicToolCallStatus.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/v2/DynamicToolCallStatus.ts:3	The ts-rs note records the status union.
+app-server-protocol/schema/typescript/v2/DynamicToolCallStatus.ts:4	A blank line opens before the lifecycle states.
+app-server-protocol/schema/typescript/v2/DynamicToolCallStatus.ts:5	Dynamic tool calls are in progress, completed, or failed.
+app-server-protocol/schema/typescript/v2/ExecPolicyAmendment.ts:1	The generated banner watches exec policy amendments.
+app-server-protocol/schema/typescript/v2/ExecPolicyAmendment.ts:2	A blank line keeps the warning distinct.
+app-server-protocol/schema/typescript/v2/ExecPolicyAmendment.ts:3	The ts-rs line records the amendment alias.
+app-server-protocol/schema/typescript/v2/ExecPolicyAmendment.ts:4	A blank line waits before the string list.
+app-server-protocol/schema/typescript/v2/ExecPolicyAmendment.ts:5	ExecPolicyAmendment is an array of strings, a list of policy edits.
+app-server-protocol/schema/typescript/v2/ExperimentalFeatureStage.ts:1	The generated banner guards experimental feature stages.
+app-server-protocol/schema/typescript/v2/ExperimentalFeatureStage.ts:2	A blank line gives the warning a clean floor.
+app-server-protocol/schema/typescript/v2/ExperimentalFeatureStage.ts:3	The ts-rs note signs the stage union.
+app-server-protocol/schema/typescript/v2/ExperimentalFeatureStage.ts:4	A blank line clears the release ladder.
+app-server-protocol/schema/typescript/v2/ExperimentalFeatureStage.ts:5	Experimental stages move from beta and development to stable, deprecated, or removed.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigImportResponse.ts:1	The generated banner protects external-agent import responses.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigImportResponse.ts:2	A blank line separates warning from provenance.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigImportResponse.ts:3	The ts-rs line records the import response object.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigImportResponse.ts:4	A blank line opens before the import id.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigImportResponse.ts:5	The import response returns the id of the imported configuration.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigMigrationItemType.ts:1	The generated banner guards external-agent migration item kinds.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigMigrationItemType.ts:2	A blank line rests below the warning.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigMigrationItemType.ts:3	The ts-rs note records the migration item union.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigMigrationItemType.ts:4	A blank line clears the long list of migrated materials.
+app-server-protocol/schema/typescript/v2/ExternalAgentConfigMigrationItemType.ts:5	Migration items span instructions, config, skills, plugins, MCP, subagents, hooks, commands, and sessions.
+app-server-protocol/schema/typescript/v2/FeedbackUploadParams.ts:1	The generated banner protects feedback upload params.
+app-server-protocol/schema/typescript/v2/FeedbackUploadParams.ts:2	A blank line leaves the warning unblurred.
+app-server-protocol/schema/typescript/v2/FeedbackUploadParams.ts:3	The ts-rs line records the feedback parameter object.
+app-server-protocol/schema/typescript/v2/FeedbackUploadParams.ts:4	A blank line opens before classification and context.
+app-server-protocol/schema/typescript/v2/FeedbackUploadParams.ts:5	Feedback upload params carry classification, optional reason, thread, logs, files, and tags.
+app-server-protocol/schema/typescript/v2/FeedbackUploadResponse.ts:1	The generated banner guards feedback upload responses.
+app-server-protocol/schema/typescript/v2/FeedbackUploadResponse.ts:2	A blank line separates warning and generator.
+app-server-protocol/schema/typescript/v2/FeedbackUploadResponse.ts:3	The ts-rs note signs the response object.
+app-server-protocol/schema/typescript/v2/FeedbackUploadResponse.ts:4	A blank line clears the single field.
+app-server-protocol/schema/typescript/v2/FeedbackUploadResponse.ts:5	The feedback response returns the related thread id.
+app-server-protocol/schema/typescript/v2/FileChangeApprovalDecision.ts:1	The generated banner protects file-change approval decisions.
+app-server-protocol/schema/typescript/v2/FileChangeApprovalDecision.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/v2/FileChangeApprovalDecision.ts:3	The ts-rs line records the approval decision union.
+app-server-protocol/schema/typescript/v2/FileChangeApprovalDecision.ts:4	A blank line clears the possible answers.
+app-server-protocol/schema/typescript/v2/FileChangeApprovalDecision.ts:5	File changes may be accepted, accepted for session, declined, or canceled.
+app-server-protocol/schema/typescript/v2/FileSystemAccessMode.ts:1	The generated banner guards file-system access modes.
+app-server-protocol/schema/typescript/v2/FileSystemAccessMode.ts:2	A blank line leaves the warning readable.
+app-server-protocol/schema/typescript/v2/FileSystemAccessMode.ts:3	The ts-rs note records the access mode union.
+app-server-protocol/schema/typescript/v2/FileSystemAccessMode.ts:4	A blank line opens before permissions.
+app-server-protocol/schema/typescript/v2/FileSystemAccessMode.ts:5	File-system access is read, write, or deny.
+app-server-protocol/schema/typescript/v2/FileSystemSpecialPath.ts:1	The generated banner watches special filesystem paths.
+app-server-protocol/schema/typescript/v2/FileSystemSpecialPath.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/v2/FileSystemSpecialPath.ts:3	The ts-rs line signs the special path union.
+app-server-protocol/schema/typescript/v2/FileSystemSpecialPath.ts:4	A blank line opens before root, temp, and unknown paths.
+app-server-protocol/schema/typescript/v2/FileSystemSpecialPath.ts:5	Special paths name root, minimal, project roots, temp places, or an unknown path.
+app-server-protocol/schema/typescript/v2/GitInfo.ts:1	The generated banner protects v2 Git info.
+app-server-protocol/schema/typescript/v2/GitInfo.ts:2	A blank line gives the warning space.
+app-server-protocol/schema/typescript/v2/GitInfo.ts:3	The ts-rs note records the Git info object.
+app-server-protocol/schema/typescript/v2/GitInfo.ts:4	A blank line clears the repository fields.
+app-server-protocol/schema/typescript/v2/GitInfo.ts:5	GitInfo holds optional SHA, branch, and origin URL.
+app-server-protocol/schema/typescript/v2/GuardianCommandSource.ts:1	The generated banner guards guardian command sources.
+app-server-protocol/schema/typescript/v2/GuardianCommandSource.ts:2	A blank line rests beneath the warning.
+app-server-protocol/schema/typescript/v2/GuardianCommandSource.ts:3	The ts-rs line records the source union.
+app-server-protocol/schema/typescript/v2/GuardianCommandSource.ts:4	A blank line opens before the two sources.
+app-server-protocol/schema/typescript/v2/GuardianCommandSource.ts:5	Guardian commands originate from shell or unified exec.
+app-server-protocol/schema/typescript/v2/HookErrorInfo.ts:1	The generated banner protects hook error info.
+app-server-protocol/schema/typescript/v2/HookErrorInfo.ts:2	A blank line leaves warning and origin apart.
+app-server-protocol/schema/typescript/v2/HookErrorInfo.ts:3	The ts-rs note signs the hook error object.
+app-server-protocol/schema/typescript/v2/HookErrorInfo.ts:4	A blank line opens before path and message.
+app-server-protocol/schema/typescript/v2/HookErrorInfo.ts:5	HookErrorInfo carries the path and the message.
+app-server-protocol/schema/typescript/v2/HookEventName.ts:1	The generated banner guards hook event names.
+app-server-protocol/schema/typescript/v2/HookEventName.ts:2	A blank line gives the warning a small pause.
+app-server-protocol/schema/typescript/v2/HookEventName.ts:3	The ts-rs line records the hook event union.
+app-server-protocol/schema/typescript/v2/HookEventName.ts:4	A blank line opens before the hook lifecycle.
+app-server-protocol/schema/typescript/v2/HookEventName.ts:5	Hook events cover tool use, permissions, compaction, session start, prompts, subagents, and stop.
+app-server-protocol/schema/typescript/v2/HookExecutionMode.ts:1	The generated banner protects hook execution modes.
+app-server-protocol/schema/typescript/v2/HookExecutionMode.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/v2/HookExecutionMode.ts:3	The ts-rs line records the execution mode union.
+app-server-protocol/schema/typescript/v2/HookExecutionMode.ts:4	A blank line clears the timing choices.
+app-server-protocol/schema/typescript/v2/HookExecutionMode.ts:5	Hook execution runs synchronously or asynchronously.
+app-server-protocol/schema/typescript/v2/HookHandlerType.ts:1	The generated banner guards hook handler types.
+app-server-protocol/schema/typescript/v2/HookHandlerType.ts:2	A blank line leaves the warning readable.
+app-server-protocol/schema/typescript/v2/HookHandlerType.ts:3	The ts-rs note signs the handler type union.
+app-server-protocol/schema/typescript/v2/HookHandlerType.ts:4	A blank line opens before the handler names.
+app-server-protocol/schema/typescript/v2/HookHandlerType.ts:5	Hook handlers are command, prompt, or agent.
+app-server-protocol/schema/typescript/v2/HookMigration.ts:1	The generated banner watches hook migration names.
+app-server-protocol/schema/typescript/v2/HookMigration.ts:2	A blank line gives the warning space.
+app-server-protocol/schema/typescript/v2/HookMigration.ts:3	The ts-rs line records the hook migration object.
+app-server-protocol/schema/typescript/v2/HookMigration.ts:4	A blank line clears the migration label.
+app-server-protocol/schema/typescript/v2/HookMigration.ts:5	HookMigration carries the migration name.
+app-server-protocol/schema/typescript/v2/HookOutputEntryKind.ts:1	The generated banner protects hook output entry kinds.
+app-server-protocol/schema/typescript/v2/HookOutputEntryKind.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/v2/HookOutputEntryKind.ts:3	The ts-rs note records the output kind union.
+app-server-protocol/schema/typescript/v2/HookOutputEntryKind.ts:4	A blank line opens before the hook output categories.
+app-server-protocol/schema/typescript/v2/HookOutputEntryKind.ts:5	Hook output may be warning, stop, feedback, context, or error.
+app-server-protocol/schema/typescript/v2/HookPromptFragment.ts:1	The generated banner guards hook prompt fragments.
+app-server-protocol/schema/typescript/v2/HookPromptFragment.ts:2	A blank line leaves the warning distinct.
+app-server-protocol/schema/typescript/v2/HookPromptFragment.ts:3	The ts-rs line signs the prompt fragment object.
+app-server-protocol/schema/typescript/v2/HookPromptFragment.ts:4	A blank line opens before text and run id.
+app-server-protocol/schema/typescript/v2/HookPromptFragment.ts:5	HookPromptFragment carries text and its hook run id.
+app-server-protocol/schema/typescript/v2/HookRunStatus.ts:1	The generated banner protects hook run statuses.
+app-server-protocol/schema/typescript/v2/HookRunStatus.ts:2	A blank line keeps warning and provenance apart.
+app-server-protocol/schema/typescript/v2/HookRunStatus.ts:3	The ts-rs note records the hook run status union.
+app-server-protocol/schema/typescript/v2/HookRunStatus.ts:4	A blank line clears the status list.
+app-server-protocol/schema/typescript/v2/HookRunStatus.ts:5	Hook runs may be running, completed, failed, blocked, or stopped.
+app-server-protocol/schema/typescript/v2/HookScope.ts:1	The generated banner watches hook scopes.
+app-server-protocol/schema/typescript/v2/HookScope.ts:2	A blank line separates warning from source.
+app-server-protocol/schema/typescript/v2/HookScope.ts:3	The ts-rs line records the hook scope union.
+app-server-protocol/schema/typescript/v2/HookScope.ts:4	A blank line opens before the two scopes.
+app-server-protocol/schema/typescript/v2/HookScope.ts:5	Hook scope is thread or turn.
+app-server-protocol/schema/typescript/v2/HookSource.ts:1	The generated banner protects hook sources.
+app-server-protocol/schema/typescript/v2/HookSource.ts:2	A blank line rests below the warning.
+app-server-protocol/schema/typescript/v2/HookSource.ts:3	The ts-rs note signs the source union.
+app-server-protocol/schema/typescript/v2/HookSource.ts:4	A blank line clears the long source list.
+app-server-protocol/schema/typescript/v2/HookSource.ts:5	Hook sources include system, user, project, management, plugins, cloud config, legacy config, and unknown.
+app-server-protocol/schema/typescript/v2/HookTrustStatus.ts:1	The generated banner guards hook trust status.
+app-server-protocol/schema/typescript/v2/HookTrustStatus.ts:2	A blank line leaves the warning clean.
+app-server-protocol/schema/typescript/v2/HookTrustStatus.ts:3	The ts-rs line records the trust status union.
+app-server-protocol/schema/typescript/v2/HookTrustStatus.ts:4	A blank line opens before the trust states.
+app-server-protocol/schema/typescript/v2/HookTrustStatus.ts:5	Hook trust is managed, untrusted, trusted, or modified.
+app-server-protocol/schema/typescript/v2/LogoutAccountResponse.ts:1	The generated banner protects logout account responses.
+app-server-protocol/schema/typescript/v2/LogoutAccountResponse.ts:2	A blank line separates warning from generator.
+app-server-protocol/schema/typescript/v2/LogoutAccountResponse.ts:3	The ts-rs note records the logout response shape.
+app-server-protocol/schema/typescript/v2/LogoutAccountResponse.ts:4	A blank line waits before the empty record.
+app-server-protocol/schema/typescript/v2/LogoutAccountResponse.ts:5	LogoutAccountResponse carries no fields.
+app-server-protocol/schema/typescript/v2/MarketplaceAddParams.ts:1	The generated banner watches marketplace add params.
+app-server-protocol/schema/typescript/v2/MarketplaceAddParams.ts:2	A blank line gives the warning a clear edge.
+app-server-protocol/schema/typescript/v2/MarketplaceAddParams.ts:3	The ts-rs line signs the add params object.
+app-server-protocol/schema/typescript/v2/MarketplaceAddParams.ts:4	A blank line opens before source and sparse paths.
+app-server-protocol/schema/typescript/v2/MarketplaceAddParams.ts:5	Marketplace add params carry source, optional ref name, and sparse paths.
+app-server-protocol/schema/typescript/v2/MarketplaceInterface.ts:1	The generated banner protects marketplace interface shape.
+app-server-protocol/schema/typescript/v2/MarketplaceInterface.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/v2/MarketplaceInterface.ts:3	The ts-rs note records the marketplace interface object.
+app-server-protocol/schema/typescript/v2/MarketplaceInterface.ts:4	A blank line clears the display field.
+app-server-protocol/schema/typescript/v2/MarketplaceInterface.ts:5	MarketplaceInterface holds an optional display name.
+app-server-protocol/schema/typescript/v2/MarketplaceRemoveParams.ts:1	The generated banner guards marketplace removal params.
+app-server-protocol/schema/typescript/v2/MarketplaceRemoveParams.ts:2	A blank line leaves warning and provenance apart.
+app-server-protocol/schema/typescript/v2/MarketplaceRemoveParams.ts:3	The ts-rs line records the remove params object.
+app-server-protocol/schema/typescript/v2/MarketplaceRemoveParams.ts:4	A blank line opens before the marketplace name.
+app-server-protocol/schema/typescript/v2/MarketplaceRemoveParams.ts:5	Marketplace removal names the marketplace to remove.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeErrorInfo.ts:1	The generated banner protects marketplace upgrade errors.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeErrorInfo.ts:2	A blank line keeps the warning readable.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeErrorInfo.ts:3	The ts-rs note signs the upgrade error object.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeErrorInfo.ts:4	A blank line clears the error fields.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeErrorInfo.ts:5	Marketplace upgrade errors carry marketplace name and message.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeParams.ts:1	The generated banner guards marketplace upgrade params.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeParams.ts:2	A blank line rests below the warning.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeParams.ts:3	The ts-rs line records the upgrade params object.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeParams.ts:4	A blank line opens before the optional target.
+app-server-protocol/schema/typescript/v2/MarketplaceUpgradeParams.ts:5	Marketplace upgrade may name a specific marketplace.
+app-server-protocol/schema/typescript/v2/McpAuthStatus.ts:1	The generated banner protects MCP auth status.
+app-server-protocol/schema/typescript/v2/McpAuthStatus.ts:2	A blank line separates warning and source.
+app-server-protocol/schema/typescript/v2/McpAuthStatus.ts:3	The ts-rs note records the auth status union.
+app-server-protocol/schema/typescript/v2/McpAuthStatus.ts:4	A blank line clears the auth modes.
+app-server-protocol/schema/typescript/v2/McpAuthStatus.ts:5	MCP auth may be unsupported, logged out, bearer token, or OAuth.
+app-server-protocol/schema/typescript/v2/McpElicitationArrayType.ts:1	The generated banner guards MCP elicitation array type.
+app-server-protocol/schema/typescript/v2/McpElicitationArrayType.ts:2	A blank line gives the warning space.
+app-server-protocol/schema/typescript/v2/McpElicitationArrayType.ts:3	The ts-rs line signs the array type literal.
+app-server-protocol/schema/typescript/v2/McpElicitationArrayType.ts:4	A blank line opens before the literal.
+app-server-protocol/schema/typescript/v2/McpElicitationArrayType.ts:5	MCP elicitation array type is array.
+app-server-protocol/schema/typescript/v2/McpElicitationBooleanType.ts:1	The generated banner protects MCP elicitation boolean type.
+app-server-protocol/schema/typescript/v2/McpElicitationBooleanType.ts:2	A blank line separates warning and origin.
+app-server-protocol/schema/typescript/v2/McpElicitationBooleanType.ts:3	The ts-rs note records the boolean type literal.
+app-server-protocol/schema/typescript/v2/McpElicitationBooleanType.ts:4	A blank line clears the literal value.
+app-server-protocol/schema/typescript/v2/McpElicitationBooleanType.ts:5	MCP elicitation boolean type is boolean.
+app-server-protocol/schema/typescript/v2/McpElicitationConstOption.ts:1	The generated banner guards MCP elicitation const options.
+app-server-protocol/schema/typescript/v2/McpElicitationConstOption.ts:2	A blank line rests beneath the warning.
+app-server-protocol/schema/typescript/v2/McpElicitationConstOption.ts:3	The ts-rs line records the const option object.
+app-server-protocol/schema/typescript/v2/McpElicitationConstOption.ts:4	A blank line opens before value and title.
+app-server-protocol/schema/typescript/v2/McpElicitationConstOption.ts:5	Const options pair a constant string with a title.
+app-server-protocol/schema/typescript/v2/McpElicitationNumberType.ts:1	The generated banner protects MCP elicitation number type.
+app-server-protocol/schema/typescript/v2/McpElicitationNumberType.ts:2	A blank line leaves the warning clear.
+app-server-protocol/schema/typescript/v2/McpElicitationNumberType.ts:3	The ts-rs note signs the number type union.
+app-server-protocol/schema/typescript/v2/McpElicitationNumberType.ts:4	A blank line opens before numeric choices.
+app-server-protocol/schema/typescript/v2/McpElicitationNumberType.ts:5	MCP elicitation numbers may be number or integer.
+app-server-protocol/schema/typescript/v2/McpElicitationObjectType.ts:1	The generated banner protects MCP elicitation object type.
+app-server-protocol/schema/typescript/v2/McpElicitationObjectType.ts:2	A blank line gives the warning its margin.
+app-server-protocol/schema/typescript/v2/McpElicitationObjectType.ts:3	The ts-rs note records the object type literal.
+app-server-protocol/schema/typescript/v2/McpElicitationObjectType.ts:4	A blank line clears the single value.
+app-server-protocol/schema/typescript/v2/McpElicitationObjectType.ts:5	MCP elicitation object type is object.
+app-server-protocol/schema/typescript/v2/McpElicitationStringFormat.ts:1	The generated banner guards MCP elicitation string formats.
+app-server-protocol/schema/typescript/v2/McpElicitationStringFormat.ts:2	A blank line separates warning and provenance.
+app-server-protocol/schema/typescript/v2/McpElicitationStringFormat.ts:3	The ts-rs line signs the string format union.
+app-server-protocol/schema/typescript/v2/McpElicitationStringFormat.ts:4	A blank line opens before email, URI, and dates.
+app-server-protocol/schema/typescript/v2/McpElicitationStringFormat.ts:5	String formats cover email, URI, date, and date-time.
+app-server-protocol/schema/typescript/v2/McpElicitationStringType.ts:1	The generated banner protects MCP elicitation string type.
+app-server-protocol/schema/typescript/v2/McpElicitationStringType.ts:2	A blank line leaves the warning clear.
+app-server-protocol/schema/typescript/v2/McpElicitationStringType.ts:3	The ts-rs note records the string type literal.
+app-server-protocol/schema/typescript/v2/McpElicitationStringType.ts:4	A blank line waits before the literal.
+app-server-protocol/schema/typescript/v2/McpElicitationStringType.ts:5	MCP elicitation string type is string.
+app-server-protocol/schema/typescript/v2/McpResourceReadParams.ts:1	The generated banner guards MCP resource read params.
+app-server-protocol/schema/typescript/v2/McpResourceReadParams.ts:2	A blank line separates warning from origin.
+app-server-protocol/schema/typescript/v2/McpResourceReadParams.ts:3	The ts-rs line records the resource read object.
+app-server-protocol/schema/typescript/v2/McpResourceReadParams.ts:4	A blank line opens before thread, server, and URI.
+app-server-protocol/schema/typescript/v2/McpResourceReadParams.ts:5	Resource read params carry optional thread, server name, and URI.
+app-server-protocol/schema/typescript/v2/McpServerElicitationAction.ts:1	The generated banner protects MCP elicitation actions.
+app-server-protocol/schema/typescript/v2/McpServerElicitationAction.ts:2	A blank line lets the warning stand.
+app-server-protocol/schema/typescript/v2/McpServerElicitationAction.ts:3	The ts-rs note records the elicitation action union.
+app-server-protocol/schema/typescript/v2/McpServerElicitationAction.ts:4	A blank line clears the response choices.
+app-server-protocol/schema/typescript/v2/McpServerElicitationAction.ts:5	MCP elicitation actions are accept, decline, or cancel.
+app-server-protocol/schema/typescript/v2/McpServerMigration.ts:1	The generated banner guards MCP server migration names.
+app-server-protocol/schema/typescript/v2/McpServerMigration.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/v2/McpServerMigration.ts:3	The ts-rs line signs the server migration object.
+app-server-protocol/schema/typescript/v2/McpServerMigration.ts:4	A blank line clears the migration label.
+app-server-protocol/schema/typescript/v2/McpServerMigration.ts:5	MCP server migration carries its name.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginCompletedNotification.ts:1	The generated banner protects OAuth login completion.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginCompletedNotification.ts:2	A blank line separates warning and generator.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginCompletedNotification.ts:3	The ts-rs note records the login completion notification.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginCompletedNotification.ts:4	A blank line opens before name, success, and error.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginCompletedNotification.ts:5	OAuth login completion reports server name, success, and optional error.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginParams.ts:1	The generated banner guards OAuth login params.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginParams.ts:2	A blank line leaves the warning readable.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginParams.ts:3	The ts-rs line signs the OAuth login params object.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginParams.ts:4	A blank line opens before server name and timing.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginParams.ts:5	OAuth login params carry name, optional scopes, and optional timeout.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginResponse.ts:1	The generated banner protects OAuth login responses.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginResponse.ts:2	A blank line gives the warning room.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginResponse.ts:3	The ts-rs note records the OAuth login response.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginResponse.ts:4	A blank line clears the single URL.
+app-server-protocol/schema/typescript/v2/McpServerOauthLoginResponse.ts:5	OAuth login response returns the authorization URL.
+app-server-protocol/schema/typescript/v2/McpServerRefreshResponse.ts:1	The generated banner guards MCP server refresh responses.
+app-server-protocol/schema/typescript/v2/McpServerRefreshResponse.ts:2	A blank line separates warning from source.
+app-server-protocol/schema/typescript/v2/McpServerRefreshResponse.ts:3	The ts-rs line records the refresh response shape.
+app-server-protocol/schema/typescript/v2/McpServerRefreshResponse.ts:4	A blank line waits before the empty record.
+app-server-protocol/schema/typescript/v2/McpServerRefreshResponse.ts:5	MCP server refresh response carries no fields.
+app-server-protocol/schema/typescript/v2/McpServerStartupState.ts:1	The generated banner watches MCP server startup states.
+app-server-protocol/schema/typescript/v2/McpServerStartupState.ts:2	A blank line leaves the warning clean.
+app-server-protocol/schema/typescript/v2/McpServerStartupState.ts:3	The ts-rs note signs the startup state union.
+app-server-protocol/schema/typescript/v2/McpServerStartupState.ts:4	A blank line clears startup outcomes.
+app-server-protocol/schema/typescript/v2/McpServerStartupState.ts:5	MCP startup can be starting, ready, failed, or cancelled.
+app-server-protocol/schema/typescript/v2/McpServerStatusDetail.ts:1	The generated banner protects MCP server status detail.
+app-server-protocol/schema/typescript/v2/McpServerStatusDetail.ts:2	A blank line separates warning and provenance.
+app-server-protocol/schema/typescript/v2/McpServerStatusDetail.ts:3	The ts-rs line records the status detail union.
+app-server-protocol/schema/typescript/v2/McpServerStatusDetail.ts:4	A blank line opens before detail levels.
+app-server-protocol/schema/typescript/v2/McpServerStatusDetail.ts:5	MCP server status can be full or tools-and-auth only.
+app-server-protocol/schema/typescript/v2/McpToolCallAppContext.ts:1	The generated banner guards MCP tool-call app context.
+app-server-protocol/schema/typescript/v2/McpToolCallAppContext.ts:2	A blank line follows the warning.
+app-server-protocol/schema/typescript/v2/McpToolCallAppContext.ts:3	The ts-rs note records the app context object.
+app-server-protocol/schema/typescript/v2/McpToolCallAppContext.ts:4	A blank line opens before connector and resource fields.
+app-server-protocol/schema/typescript/v2/McpToolCallAppContext.ts:5	App context carries connector id, optional link id, and optional resource URI.
+app-server-protocol/schema/typescript/v2/McpToolCallError.ts:1	The generated banner protects MCP tool-call errors.
+app-server-protocol/schema/typescript/v2/McpToolCallError.ts:2	A blank line gives the warning space.
+app-server-protocol/schema/typescript/v2/McpToolCallError.ts:3	The ts-rs line records the tool-call error object.
+app-server-protocol/schema/typescript/v2/McpToolCallError.ts:4	A blank line clears the error message.
+app-server-protocol/schema/typescript/v2/McpToolCallError.ts:5	MCP tool-call error carries a message.
+app-server-protocol/schema/typescript/v2/McpToolCallProgressNotification.ts:1	The generated banner watches MCP tool-call progress.
+app-server-protocol/schema/typescript/v2/McpToolCallProgressNotification.ts:2	A blank line separates warning and origin.
+app-server-protocol/schema/typescript/v2/McpToolCallProgressNotification.ts:3	The ts-rs note signs the progress notification.
+app-server-protocol/schema/typescript/v2/McpToolCallProgressNotification.ts:4	A blank line opens before identifiers and message.
+app-server-protocol/schema/typescript/v2/McpToolCallProgressNotification.ts:5	Progress notification carries thread, turn, item, and message.
+app-server-protocol/schema/typescript/v2/McpToolCallStatus.ts:1	The generated banner protects MCP tool-call status.
+app-server-protocol/schema/typescript/v2/McpToolCallStatus.ts:2	A blank line leaves the warning distinct.
+app-server-protocol/schema/typescript/v2/McpToolCallStatus.ts:3	The ts-rs line records the status union.
+app-server-protocol/schema/typescript/v2/McpToolCallStatus.ts:4	A blank line clears the three states.
+app-server-protocol/schema/typescript/v2/McpToolCallStatus.ts:5	MCP tool calls are in progress, completed, or failed.
+app-server-protocol/schema/typescript/v2/MemoryCitationEntry.ts:1	The generated banner guards memory citation entries.
+app-server-protocol/schema/typescript/v2/MemoryCitationEntry.ts:2	A blank line separates warning from generator.
+app-server-protocol/schema/typescript/v2/MemoryCitationEntry.ts:3	The ts-rs note records the citation entry object.
+app-server-protocol/schema/typescript/v2/MemoryCitationEntry.ts:4	A blank line opens before path, lines, and note.
+app-server-protocol/schema/typescript/v2/MemoryCitationEntry.ts:5	A memory citation names a path, line span, and note.
+app-server-protocol/schema/typescript/v2/MergeStrategy.ts:1	The generated banner protects merge strategies.
+app-server-protocol/schema/typescript/v2/MergeStrategy.ts:2	A blank line keeps the warning readable.
+app-server-protocol/schema/typescript/v2/MergeStrategy.ts:3	The ts-rs line records the merge strategy union.
+app-server-protocol/schema/typescript/v2/MergeStrategy.ts:4	A blank line clears the strategy options.
+app-server-protocol/schema/typescript/v2/MergeStrategy.ts:5	Merge strategy chooses replace or upsert.
+app-server-protocol/schema/typescript/v2/ModelAvailabilityNux.ts:1	The generated banner guards model availability nux.
+app-server-protocol/schema/typescript/v2/ModelAvailabilityNux.ts:2	A blank line gives the warning air.
+app-server-protocol/schema/typescript/v2/ModelAvailabilityNux.ts:3	The ts-rs note records the nux message object.
+app-server-protocol/schema/typescript/v2/ModelAvailabilityNux.ts:4	A blank line clears the one-field shape.
+app-server-protocol/schema/typescript/v2/ModelAvailabilityNux.ts:5	Model availability nux carries a message.
+app-server-protocol/schema/typescript/v2/ModelProviderCapabilitiesReadParams.ts:1	The generated banner protects model-provider capability read params.
+app-server-protocol/schema/typescript/v2/ModelProviderCapabilitiesReadParams.ts:2	A blank line separates warning and source.
+app-server-protocol/schema/typescript/v2/ModelProviderCapabilitiesReadParams.ts:3	The ts-rs line records the empty capability-read params.
+app-server-protocol/schema/typescript/v2/ModelProviderCapabilitiesReadParams.ts:4	A blank line waits before the empty record.
+app-server-protocol/schema/typescript/v2/ModelProviderCapabilitiesReadParams.ts:5	Capability read params carry no fields.

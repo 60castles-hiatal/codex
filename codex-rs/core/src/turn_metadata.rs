@@ -13,7 +13,6 @@ use crate::responses_metadata::CodexResponsesMetadata;
 use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::responses_metadata::TurnMetadataWorkspace;
 use crate::responses_metadata::filter_extra_metadata;
-use crate::responses_metadata::subagent_header_value;
 use crate::responses_metadata::subagent_metadata_kind;
 use crate::sandbox_tags::permission_profile_sandbox_tag;
 use codex_git_utils::get_git_remote_urls_assume_git_repo;
@@ -75,7 +74,7 @@ pub async fn detached_memory_responses_metadata(
 ) -> CodexResponsesMetadata {
     CodexResponsesMetadata {
         request_kind: Some(CodexResponsesRequestKind::Memory),
-        subagent_header: subagent_header_value(session_source),
+        subagent_kind: subagent_metadata_kind(session_source),
         sandbox: sandbox.map(ToString::to_string),
         workspaces: memory_workspaces(cwd).await,
         ..CodexResponsesMetadata::new(installation_id, session_id, thread_id, window_id)
@@ -90,7 +89,6 @@ pub(crate) struct TurnMetadataState {
     thread_id: String,
     forked_from_thread_id: Option<ThreadId>,
     parent_thread_id: Option<ThreadId>,
-    subagent_header: Option<String>,
     subagent_kind: Option<String>,
     thread_source: Option<ThreadSource>,
     turn_id: String,
@@ -133,7 +131,6 @@ impl TurnMetadataState {
             thread_id,
             forked_from_thread_id,
             parent_thread_id,
-            subagent_header: subagent_header_value(session_source),
             subagent_kind: subagent_metadata_kind(session_source),
             thread_source,
             turn_id,
@@ -227,7 +224,6 @@ impl TurnMetadataState {
             turn_id: Some(self.turn_id.clone()),
             forked_from_thread_id: self.forked_from_thread_id,
             parent_thread_id: self.parent_thread_id,
-            subagent_header: self.subagent_header.clone(),
             subagent_kind: self.subagent_kind.clone(),
             thread_source: self.thread_source.clone(),
             sandbox: self.sandbox.clone(),

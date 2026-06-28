@@ -9,6 +9,7 @@ use codex_api::ApiError;
 use codex_api::AuthError;
 use codex_api::AuthProvider;
 use codex_api::Compression;
+use codex_api::ContextManagement;
 use codex_api::Provider;
 use codex_api::ResponsesApiRequest;
 use codex_api::ResponsesClient;
@@ -27,6 +28,7 @@ use http::HeaderMap;
 use http::HeaderValue;
 use http::StatusCode;
 use pretty_assertions::assert_eq;
+use serde_json::json;
 
 fn assert_path_ends_with(requests: &[Request], suffix: &str) {
     assert_eq!(requests.len(), 1);
@@ -325,6 +327,7 @@ async fn responses_client_stream_request_preserves_item_ids() -> Result<()> {
         service_tier: None,
         prompt_cache_key: None,
         text: None,
+        context_management: None,
         client_metadata: None,
     };
     let expected = serde_json::to_value(&request)?;
@@ -346,6 +349,45 @@ async fn responses_client_stream_request_preserves_item_ids() -> Result<()> {
         prepared.headers.get(http::header::CONTENT_TYPE),
         Some(&HeaderValue::from_static("application/json"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn responses_client_stream_request_sends_context_management() -> Result<()> {
+    let state = RecordingState::default();
+    let transport = RecordingTransport::new(state.clone());
+    let client = ResponsesClient::new(transport, provider("openai"), Arc::new(NoAuth));
+    let request = ResponsesApiRequest {
+        model: "gpt-test".into(),
+        instructions: "Say hi".into(),
+        input: Vec::new(),
+        tools: Vec::new(),
+        tool_choice: "auto".into(),
+        parallel_tool_calls: false,
+        reasoning: None,
+        store: false,
+        stream: true,
+        include: Vec::new(),
+        service_tier: None,
+        prompt_cache_key: None,
+        text: None,
+        context_management: Some(vec![ContextManagement::Compaction {
+            compact_threshold: 360_000,
+        }]),
+        client_metadata: None,
+    };
+
+    let _stream = client
+        .stream_request(request, ResponsesOptions::default())
+        .await?;
+
+    let requests = state.take_stream_requests();
+    let body: serde_json::Value = serde_json::from_slice(request_body_bytes(&requests[0]))?;
+    assert_eq!(
+        body.get("context_management"),
+        Some(&json!([{"type": "compaction", "compact_threshold": 360000}]))
+    );
+
     Ok(())
 }
 
@@ -411,6 +453,7 @@ async fn streaming_client_retries_on_transport_error() -> Result<()> {
         service_tier: None,
         prompt_cache_key: None,
         text: None,
+        context_management: None,
         client_metadata: None,
     };
     let client = ResponsesClient::new(transport.clone(), provider, Arc::new(NoAuth));
@@ -530,6 +573,7 @@ async fn azure_store_sends_ids_and_headers() -> Result<()> {
         service_tier: None,
         prompt_cache_key: None,
         text: None,
+        context_management: None,
         client_metadata: None,
     };
 

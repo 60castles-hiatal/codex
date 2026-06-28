@@ -38,6 +38,7 @@ use codex_rollout_trace::replay_bundle;
 use core_test_support::TestCodexResponsesRequestKind;
 use core_test_support::load_default_config_for_test;
 use core_test_support::responses::WebSocketConnectionConfig;
+use core_test_support::responses::WebSocketHandshake;
 use core_test_support::responses::WebSocketTestServer;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -88,7 +89,6 @@ const MODEL: &str = "gpt-5.3-codex";
 const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 const USER_AGENT_HEADER: &str = "user-agent";
 const WS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
-const X_CLIENT_REQUEST_ID_HEADER: &str = "x-client-request-id";
 const CODEX_AUTH_ROTATION_JSON_ENV: &str = "CODEX_AUTH_ROTATION_JSON";
 const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -101,9 +101,19 @@ fn assert_no_client_metadata(body: &serde_json::Value) {
     );
 }
 
-fn parse_turn_metadata_header(value: Option<String>) -> serde_json::Value {
-    serde_json::from_str(&value.expect("x-codex-turn-metadata header"))
-        .expect("valid x-codex-turn-metadata json")
+fn assert_no_handshake_metadata_headers(handshake: &WebSocketHandshake) {
+    for header in [
+        "session-id",
+        "thread-id",
+        "x-client-request-id",
+        "x-openai-subagent",
+        "x-codex-installation-id",
+        "x-codex-window-id",
+        "x-codex-parent-thread-id",
+        "x-codex-turn-metadata",
+    ] {
+        assert_eq!(handshake.header(header), None, "{header} should be absent");
+    }
 }
 
 struct WebsocketTestHarness {
@@ -185,26 +195,10 @@ async fn responses_websocket_streams_request() {
         Some(WS_V2_BETA_HEADER_VALUE.to_string())
     );
     assert_eq!(
-        handshake.header(X_CLIENT_REQUEST_ID_HEADER),
-        Some(harness.thread_id.to_string())
-    );
-    assert_eq!(
-        handshake.header("session-id"),
-        Some(harness.session_id.to_string())
-    );
-    assert_eq!(
-        handshake.header("thread-id"),
-        Some(harness.thread_id.to_string())
-    );
-    assert_eq!(
         handshake.header(USER_AGENT_HEADER),
         Some(codex_login::default_client::get_codex_user_agent())
     );
-    let turn_metadata = parse_turn_metadata_header(handshake.header("x-codex-turn-metadata"));
-    assert_eq!(
-        turn_metadata["installation_id"].as_str(),
-        Some(TEST_INSTALLATION_ID)
-    );
+    assert_no_handshake_metadata_headers(&handshake);
     assert_no_client_metadata(&body);
 
     server.shutdown().await;
@@ -336,10 +330,7 @@ async fn responses_websocket_preconnect_reuses_connection() {
         server.single_handshake().header(USER_AGENT_HEADER),
         Some(codex_login::default_client::get_codex_user_agent())
     );
-    assert_eq!(
-        server.single_handshake().header("x-codex-window-id"),
-        Some(TEST_WINDOW_ID.to_string())
-    );
+    assert_no_handshake_metadata_headers(&server.single_handshake());
     let connection = server.single_connection();
     assert_eq!(connection.len(), 1);
 
@@ -395,12 +386,7 @@ async fn responses_websocket_request_prewarm_reconnects_after_completion() {
     assert_eq!(warmup["tools"], serde_json::json!([]));
     assert_no_client_metadata(&warmup);
     assert_no_client_metadata(&follow_up);
-    let warmup_turn_metadata =
-        parse_turn_metadata_header(server.handshakes()[0].header("x-codex-turn-metadata"));
-    assert_eq!(
-        warmup_turn_metadata["request_kind"].as_str(),
-        Some("prewarm")
-    );
+    assert_no_handshake_metadata_headers(&server.handshakes()[0]);
     assert_eq!(follow_up["type"].as_str(), Some("response.create"));
     assert_eq!(follow_up.get("previous_response_id"), None);
     assert_eq!(
@@ -444,9 +430,7 @@ async fn responses_websocket_request_prewarm_uses_caller_supplied_metadata() {
         .expect("missing warmup request")
         .body_json();
     assert_no_client_metadata(&warmup);
-    let warmup_turn_metadata =
-        parse_turn_metadata_header(server.single_handshake().header("x-codex-turn-metadata"));
-    assert_eq!(warmup_turn_metadata["request_kind"].as_str(), Some("turn"));
+    assert_no_handshake_metadata_headers(&server.single_handshake());
 
     server.shutdown().await;
 }
@@ -522,6 +506,7 @@ async fn responses_websocket_request_prewarm_traces_logical_request() {
             /*service_tier*/ None,
             &responses_metadata,
             &inference_trace,
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -700,6 +685,7 @@ async fn responses_websocket_preconnect_is_reused_even_with_header_changes() {
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -753,6 +739,7 @@ async fn responses_websocket_request_prewarm_reconnects_even_with_header_changes
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -875,10 +862,7 @@ async fn responses_websocket_preconnect_runs_when_only_v2_feature_enabled() {
 
     assert_eq!(server.handshakes().len(), 1);
     assert_eq!(server.single_connection().len(), 0);
-    assert_eq!(
-        server.single_handshake().header("x-codex-turn-metadata"),
-        None
-    );
+    assert_no_handshake_metadata_headers(&server.single_handshake());
 
     let prompt = prompt_with_input(vec![message_item("hello")]);
     stream_until_complete(&mut client_session, &harness, &prompt).await;
@@ -1169,6 +1153,7 @@ async fn responses_websocket_emits_reasoning_included_event() {
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -1244,6 +1229,7 @@ async fn responses_websocket_emits_rate_limit_events() {
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -1589,15 +1575,13 @@ async fn responses_websocket_omits_client_metadata_on_reconnected_create() {
     assert_eq!(second.get("previous_response_id"), None);
     assert_no_client_metadata(&first);
     assert_no_client_metadata(&second);
-    let handshake_metadata =
-        parse_turn_metadata_header(server.handshakes()[0].header("x-codex-turn-metadata"));
-    assert_eq!(handshake_metadata["turn_id"].as_str(), Some("turn-123"));
+    assert_no_handshake_metadata_headers(&server.handshakes()[0]);
 
     server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_sends_turn_metadata_on_handshake_only() {
+async fn responses_websocket_omits_turn_metadata_on_handshake() {
     skip_if_no_network!();
 
     let server = start_websocket_server(vec![vec![vec![
@@ -1628,9 +1612,7 @@ async fn responses_websocket_sends_turn_metadata_on_handshake_only() {
 
     assert_eq!(body["type"].as_str(), Some("response.create"));
     assert_no_client_metadata(&body);
-    let turn_metadata =
-        parse_turn_metadata_header(server.single_handshake().header("x-codex-turn-metadata"));
-    assert_eq!(turn_metadata["turn_id"].as_str(), Some("turn-123"));
+    assert_no_handshake_metadata_headers(&server.single_handshake());
 
     server.shutdown().await;
 }
@@ -2410,6 +2392,7 @@ async fn responses_websocket_v2_after_error_uses_full_create_without_previous_re
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -2504,6 +2487,7 @@ async fn responses_websocket_v2_surfaces_terminal_error_without_close_handshake(
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -2754,6 +2738,7 @@ async fn stream_until_complete_with_model_info(
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");
@@ -2803,6 +2788,7 @@ async fn stream_until_complete_with_metadata(
             service_tier.map(|service_tier| service_tier.request_value().to_string()),
             responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("websocket stream failed");

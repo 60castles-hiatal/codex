@@ -92,7 +92,7 @@
       "description": "Analytics settings loaded from config.toml. Fields are optional so we can apply defaults.",
       "properties": {
         "enabled": {
-          "description": "When `false`, disables analytics across Codex product surfaces in this profile.",
+          "description": "When `true`, enables analytics across Codex product surfaces in this profile.",
           "type": "boolean"
         }
       },
@@ -474,6 +474,9 @@
               "type": "boolean"
             },
             "connectors": {
+              "type": "boolean"
+            },
+            "context_management_compaction": {
               "type": "boolean"
             },
             "current_time_reminder": {
@@ -4560,7 +4563,7 @@
           "$ref": "#/definitions/AnalyticsConfigToml"
         }
       ],
-      "description": "When `false`, disables analytics across Codex product surfaces in this machine. Defaults to `true`."
+      "description": "When `true`, enables analytics across Codex product surfaces in this machine. Defaults to `false`."
     },
     "approval_policy": {
       "allOf": [
@@ -4775,6 +4778,9 @@
           "type": "boolean"
         },
         "connectors": {
+          "type": "boolean"
+        },
+        "context_management_compaction": {
           "type": "boolean"
         },
         "current_time_reminder": {

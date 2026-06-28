@@ -20,6 +20,7 @@ use http::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::map::Map as JsonMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -156,9 +157,14 @@ impl Drop for WsStream {
 const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 const X_MODELS_ETAG_HEADER: &str = "x-models-etag";
 const X_REASONING_INCLUDED_HEADER: &str = "x-reasoning-included";
+const WEBSOCKET_RESPONSE_EVENT_CHANNEL_CAPACITY: usize = 1600;
+const WEBSOCKET_RESPONSE_EVENT_OVERFLOW_CAPACITY: usize =
+    WEBSOCKET_RESPONSE_EVENT_CHANNEL_CAPACITY * 16;
 const OPENAI_MODEL_HEADER: &str = "openai-model";
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_CODE: &str = "websocket_connection_limit_reached";
 const WEBSOCKET_CONNECTION_LIMIT_REACHED_MESSAGE: &str = "Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.";
+
+type ResponseEventResult = std::result::Result<ResponseEvent, ApiError>;
 
 pub struct ResponsesWebsocketConnection {
     stream: Arc<Mutex<Option<WsStream>>>,
@@ -218,8 +224,9 @@ impl ResponsesWebsocketConnection {
         connection_reused: bool,
         turn_state: Option<Arc<OnceLock<String>>>,
     ) -> Result<ResponseStream, ApiError> {
-        let (tx_event, rx_event) =
-            mpsc::channel::<std::result::Result<ResponseEvent, ApiError>>(1600);
+        let (tx_event, rx_event) = mpsc::channel::<std::result::Result<ResponseEvent, ApiError>>(
+            WEBSOCKET_RESPONSE_EVENT_CHANNEL_CAPACITY,
+        );
         let stream = Arc::clone(&self.stream);
         let idle_timeout = self.idle_timeout;
         let server_reasoning_included = self.server_reasoning_included;
@@ -648,9 +655,86 @@ fn json_header_value(value: Value) -> Option<HeaderValue> {
     HeaderValue::from_str(&value).ok()
 }
 
+fn response_event_consumer_dropped_error() -> ApiError {
+    ApiError::Stream("response event consumer dropped".to_string())
+}
+
+fn websocket_response_event_overflow_error() -> ApiError {
+    ApiError::Stream(format!(
+        "websocket response event buffer exceeded {WEBSOCKET_RESPONSE_EVENT_OVERFLOW_CAPACITY} events"
+    ))
+}
+
+fn try_flush_buffered_response_events(
+    tx_event: &mpsc::Sender<ResponseEventResult>,
+    buffered_events: &mut VecDeque<ResponseEventResult>,
+) -> Result<(), ApiError> {
+    while let Some(event) = buffered_events.pop_front() {
+        match tx_event.try_send(event) {
+            Ok(()) => {}
+            Err(TrySendError::Full(event)) => {
+                buffered_events.push_front(event);
+                return Ok(());
+            }
+            Err(TrySendError::Closed(_)) => {
+                return Err(response_event_consumer_dropped_error());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn enqueue_response_event(
+    tx_event: &mpsc::Sender<ResponseEventResult>,
+    buffered_events: &mut VecDeque<ResponseEventResult>,
+    event: ResponseEventResult,
+) -> Result<(), ApiError> {
+    if !buffered_events.is_empty() {
+        try_flush_buffered_response_events(tx_event, buffered_events)?;
+    }
+
+    if buffered_events.is_empty() {
+        match tx_event.try_send(event) {
+            Ok(()) => return Ok(()),
+            Err(TrySendError::Full(event)) => {
+                buffered_events.push_back(event);
+            }
+            Err(TrySendError::Closed(_)) => {
+                return Err(response_event_consumer_dropped_error());
+            }
+        }
+    } else {
+        buffered_events.push_back(event);
+    }
+
+    if buffered_events.len() > WEBSOCKET_RESPONSE_EVENT_OVERFLOW_CAPACITY {
+        return Err(websocket_response_event_overflow_error());
+    }
+
+    Ok(())
+}
+
+fn flush_buffered_response_events(
+    tx_event: mpsc::Sender<ResponseEventResult>,
+    mut buffered_events: VecDeque<ResponseEventResult>,
+) {
+    if buffered_events.is_empty() {
+        return;
+    }
+
+    tokio::spawn(async move {
+        while let Some(event) = buffered_events.pop_front() {
+            if tx_event.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+}
+
 async fn run_websocket_response_stream(
     ws_stream: &mut WsStream,
-    tx_event: mpsc::Sender<std::result::Result<ResponseEvent, ApiError>>,
+    tx_event: mpsc::Sender<ResponseEventResult>,
     request_text: String,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
@@ -658,6 +742,7 @@ async fn run_websocket_response_stream(
     turn_state: Option<&OnceLock<String>>,
 ) -> Result<(), ApiError> {
     let mut last_server_model: Option<String> = None;
+    let mut buffered_events: VecDeque<ResponseEventResult> = VecDeque::new();
     send_websocket_request(
         ws_stream,
         request_text,
@@ -716,65 +801,53 @@ async fn run_websocket_response_stream(
                 let safety_buffering = event.safety_buffering();
                 if event.kind() == "codex.rate_limits" {
                     if let Some(snapshot) = parse_rate_limit_event(&text) {
-                        let _ = tx_event.send(Ok(ResponseEvent::RateLimits(snapshot))).await;
+                        enqueue_response_event(
+                            &tx_event,
+                            &mut buffered_events,
+                            Ok(ResponseEvent::RateLimits(snapshot)),
+                        )?;
                     }
                     continue;
                 }
                 if let Some(model) = event.response_model()
                     && last_server_model.as_deref() != Some(model.as_str())
                 {
-                    let _ = tx_event
-                        .send(Ok(ResponseEvent::ServerModel(model.clone())))
-                        .await;
+                    enqueue_response_event(
+                        &tx_event,
+                        &mut buffered_events,
+                        Ok(ResponseEvent::ServerModel(model.clone())),
+                    )?;
                     last_server_model = Some(model);
                 }
-                if let Some(verifications) = model_verifications
-                    && tx_event
-                        .send(Ok(ResponseEvent::ModelVerifications(verifications)))
-                        .await
-                        .is_err()
-                {
-                    return Err(ApiError::Stream(
-                        "response event consumer dropped".to_string(),
-                    ));
+                if let Some(verifications) = model_verifications {
+                    enqueue_response_event(
+                        &tx_event,
+                        &mut buffered_events,
+                        Ok(ResponseEvent::ModelVerifications(verifications)),
+                    )?;
                 }
-                if let Some(metadata) = turn_moderation_metadata
-                    && tx_event
-                        .send(Ok(ResponseEvent::TurnModerationMetadata(metadata)))
-                        .await
-                        .is_err()
-                {
-                    return Err(ApiError::Stream(
-                        "response event consumer dropped".to_string(),
-                    ));
+                if let Some(metadata) = turn_moderation_metadata {
+                    enqueue_response_event(
+                        &tx_event,
+                        &mut buffered_events,
+                        Ok(ResponseEvent::TurnModerationMetadata(metadata)),
+                    )?;
                 }
-                if let Some(buffering) = safety_buffering
-                    && tx_event
-                        .send(Ok(ResponseEvent::SafetyBuffering(buffering)))
-                        .await
-                        .is_err()
-                {
-                    return Err(ApiError::Stream(
-                        "response event consumer dropped".to_string(),
-                    ));
+                if let Some(buffering) = safety_buffering {
+                    enqueue_response_event(
+                        &tx_event,
+                        &mut buffered_events,
+                        Ok(ResponseEvent::SafetyBuffering(buffering)),
+                    )?;
                 }
                 match process_responses_event(event) {
                     Ok(Some(event)) => {
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
+                        enqueue_response_event(&tx_event, &mut buffered_events, Ok(event))?;
                         if is_completed {
-                            match tx_event.try_send(Ok(event)) {
-                                Ok(()) => {}
-                                Err(TrySendError::Full(event)) => {
-                                    let tx_event = tx_event.clone();
-                                    tokio::spawn(async move {
-                                        let _ = tx_event.send(event).await;
-                                    });
-                                }
-                                Err(TrySendError::Closed(_)) => {}
-                            }
-                            break;
+                            flush_buffered_response_events(tx_event, buffered_events);
+                            return Ok(());
                         }
-                        let _ = tx_event.send(Ok(event)).await;
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -794,8 +867,6 @@ async fn run_websocket_response_stream(
             Message::Ping(_) | Message::Pong(_) => {}
         }
     }
-
-    Ok(())
 }
 
 async fn send_websocket_request(
@@ -839,6 +910,7 @@ fn serialize_websocket_request(request: &ResponsesWsRequest) -> Result<String, A
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::ContextManagement;
     use crate::common::ResponseCreateWsRequest;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
@@ -875,6 +947,7 @@ mod tests {
             service_tier: Some("priority".to_string()),
             prompt_cache_key: Some("cache-key".to_string()),
             text: None,
+            context_management: None,
             generate: Some(false),
             client_metadata: Some(HashMap::from([(
                 "traceparent".to_string(),
@@ -890,6 +963,92 @@ mod tests {
 
         assert_eq!(wire_payload, previous_payload);
         assert!(wire_payload.get("client_metadata").is_none());
+    }
+
+    #[test]
+    fn direct_serialization_includes_context_management() {
+        let request = ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest {
+            model: "gpt-test".to_string(),
+            instructions: String::new(),
+            previous_response_id: None,
+            input: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: "auto".to_string(),
+            parallel_tool_calls: false,
+            reasoning: None,
+            store: false,
+            stream: true,
+            include: Vec::new(),
+            service_tier: None,
+            prompt_cache_key: None,
+            text: None,
+            context_management: Some(vec![ContextManagement::Compaction {
+                compact_threshold: 360_000,
+            }]),
+            generate: None,
+            client_metadata: None,
+        });
+
+        let payload = serde_json::to_value(&request).expect("serialize websocket payload");
+        assert_eq!(
+            payload.get("context_management"),
+            Some(&json!([{"type": "compaction", "compact_threshold": 360000}]))
+        );
+    }
+
+    #[tokio::test]
+    async fn response_events_overflow_flushes_in_order() {
+        let (tx_event, mut rx_event) = mpsc::channel::<ResponseEventResult>(1);
+        let mut buffered_events = VecDeque::new();
+
+        enqueue_response_event(
+            &tx_event,
+            &mut buffered_events,
+            Ok(ResponseEvent::ServerModel("first".to_string())),
+        )
+        .expect("enqueue first event");
+        enqueue_response_event(
+            &tx_event,
+            &mut buffered_events,
+            Ok(ResponseEvent::ServerModel("second".to_string())),
+        )
+        .expect("buffer second event");
+        enqueue_response_event(
+            &tx_event,
+            &mut buffered_events,
+            Ok(ResponseEvent::Completed {
+                response_id: "resp-1".to_string(),
+                token_usage: None,
+                end_turn: None,
+            }),
+        )
+        .expect("buffer completed event");
+
+        assert_eq!(buffered_events.len(), 2);
+        flush_buffered_response_events(tx_event, buffered_events);
+
+        assert_server_model(rx_event.recv().await, "first");
+        assert_server_model(rx_event.recv().await, "second");
+        assert_completed(rx_event.recv().await, "resp-1");
+        assert!(rx_event.recv().await.is_none());
+    }
+
+    fn assert_server_model(event: Option<ResponseEventResult>, expected: &str) {
+        match event {
+            Some(Ok(ResponseEvent::ServerModel(model))) => {
+                assert_eq!(model, expected);
+            }
+            other => panic!("expected ServerModel({expected:?}), got {other:?}"),
+        }
+    }
+
+    fn assert_completed(event: Option<ResponseEventResult>, expected_response_id: &str) {
+        match event {
+            Some(Ok(ResponseEvent::Completed { response_id, .. })) => {
+                assert_eq!(response_id, expected_response_id);
+            }
+            other => panic!("expected Completed({expected_response_id:?}), got {other:?}"),
+        }
     }
 
     #[test]

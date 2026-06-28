@@ -102,16 +102,8 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
     assert!(turn.get("client_metadata").is_none());
     let handshakes = server.handshakes();
     let handshake = &handshakes[0];
-    let warmup_metadata: Value = serde_json::from_str(
-        &handshake
-            .header("x-codex-turn-metadata")
-            .expect("warmup turn metadata"),
-    )?;
-    assert_eq!(warmup_metadata["request_kind"].as_str(), Some("prewarm"));
-    assert_eq!(
-        warmup_metadata["window_id"].as_str(),
-        handshake.header("x-codex-window-id").as_deref()
-    );
+    assert_eq!(handshake.header("x-codex-turn-metadata"), None);
+    assert_eq!(handshake.header("x-codex-window-id"), None);
     assert!(
         turn["tools"]
             .as_array()

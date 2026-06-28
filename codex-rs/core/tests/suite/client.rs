@@ -151,30 +151,24 @@ fn response_message_item_id(request: &ResponsesRequest, role: &str, text: &str) 
         .unwrap_or_else(|| panic!("missing item ID for {role} message {text:?}"))
 }
 
-fn assert_codex_request_metadata_headers(
+fn assert_no_codex_request_metadata_headers(
     request: &ResponsesRequest,
-    installation_id: &str,
-    session_id: &str,
-    thread_id: &str,
+    _installation_id: &str,
+    _session_id: &str,
+    _thread_id: &str,
 ) {
-    assert_eq!(request.header("session-id").as_deref(), Some(session_id));
-    assert_eq!(request.header("thread-id").as_deref(), Some(thread_id));
-    let turn_metadata_str = request
-        .header("x-codex-turn-metadata")
-        .expect("missing x-codex-turn-metadata header");
-    let turn_metadata = serde_json::from_str::<serde_json::Value>(&turn_metadata_str)
-        .expect("invalid x-codex-turn-metadata json");
-    assert_eq!(
-        turn_metadata["installation_id"].as_str(),
-        Some(installation_id)
-    );
-    assert_eq!(turn_metadata["session_id"].as_str(), Some(session_id));
-    assert_eq!(turn_metadata["thread_id"].as_str(), Some(thread_id));
-    assert!(turn_metadata["turn_id"].as_str().is_some());
-    assert_eq!(
-        request.header("x-codex-window-id").as_deref(),
-        turn_metadata["window_id"].as_str()
-    );
+    for header in [
+        "session-id",
+        "thread-id",
+        "x-client-request-id",
+        "x-openai-subagent",
+        "x-codex-installation-id",
+        "x-codex-window-id",
+        "x-codex-parent-thread-id",
+        "x-codex-turn-metadata",
+    ] {
+        assert_eq!(request.header(header), None, "{header} should be absent");
+    }
     assert!(request.body_json().get("client_metadata").is_none());
 }
 
@@ -1022,8 +1016,6 @@ async fn includes_session_id_thread_id_and_model_headers_in_request() {
 
     let request = resp_mock.single_request();
     assert_eq!(request.path(), "/v1/responses");
-    let request_session_id = request.header("session-id").expect("session-id header");
-    let request_thread_id = request.header("thread-id").expect("thread-id header");
     let request_authorization = request
         .header("authorization")
         .expect("authorization header");
@@ -1035,15 +1027,13 @@ async fn includes_session_id_thread_id_and_model_headers_in_request() {
     let session_id_string = expected_session_id.to_string();
     let thread_id_string = expected_thread_id.to_string();
 
-    assert_eq!(request_session_id, session_id_string.as_str());
-    assert_eq!(request_thread_id, thread_id_string.as_str());
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Test API Key");
     assert_eq!(
         request_body["prompt_cache_key"].as_str(),
         Some(thread_id_string.as_str())
     );
-    assert_codex_request_metadata_headers(
+    assert_no_codex_request_metadata_headers(
         &request,
         installation_id.as_str(),
         session_id_string.as_str(),
@@ -1186,6 +1176,7 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("responses stream to start");
@@ -1303,20 +1294,16 @@ async fn chatgpt_auth_sends_correct_request() {
         .expect("chatgpt-account-id header");
     let request_body = request.body_json();
 
-    let request_session_id = request.header("session-id").expect("session-id header");
-    let request_thread_id = request.header("thread-id").expect("thread-id header");
     let installation_id =
         std::fs::read_to_string(test.codex_home_path().join(INSTALLATION_ID_FILENAME))
             .expect("read installation id");
     let session_id_string = expected_session_id.to_string();
     let thread_id_string = expected_thread_id.to_string();
-    assert_eq!(request_session_id, session_id_string.as_str());
-    assert_eq!(request_thread_id, thread_id_string.as_str());
 
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Access Token");
     assert_eq!(request_chatgpt_account_id, "account_id");
-    assert_codex_request_metadata_headers(
+    assert_no_codex_request_metadata_headers(
         &request,
         installation_id.as_str(),
         session_id_string.as_str(),
@@ -2861,6 +2848,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
             /*service_tier*/ None,
             &responses_metadata,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
         )
         .await
         .expect("responses stream to start");
