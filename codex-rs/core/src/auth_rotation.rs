@@ -227,9 +227,9 @@ impl AuthRotation {
         chatgpt_base_url: Option<String>,
     ) -> Result<Self> {
         let account_count = config.account_homes.len();
-        if account_count < 2 {
+        if account_count < 1 {
             return Err(CodexErr::InvalidRequest(
-                "CODEX_AUTH_ROTATION_JSON account_homes must contain at least two entries"
+                "CODEX_AUTH_ROTATION_JSON account_homes must contain at least one entry"
                     .to_string(),
             ));
         }
@@ -470,11 +470,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_fewer_than_two_accounts() {
-        let err = AuthRotation::from_config(config(vec![PathBuf::from("/tmp/a")]), None)
-            .expect_err("one account should fail");
+    fn parses_singleton_config() {
+        let rotation = AuthRotation::from_config(config(vec![PathBuf::from("/tmp/a")]), None)
+            .expect("single account rotation config should parse");
 
-        assert!(err.to_string().contains("at least two"));
+        assert_eq!(rotation.account_count(), 1);
+    }
+
+    #[test]
+    fn rejects_empty_account_homes() {
+        let err = AuthRotation::from_config(config(Vec::new()), None)
+            .expect_err("empty account homes should fail");
+
+        assert!(err.to_string().contains("at least one"));
     }
 
     #[test]
