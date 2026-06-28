@@ -810,7 +810,7 @@ impl ModelClient {
             input,
             tools,
             tool_choice: "auto".to_string(),
-            parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
+            parallel_tool_calls: false,
             reasoning,
             store: provider.is_azure_responses_endpoint(),
             stream: true,

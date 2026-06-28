@@ -68,26 +68,14 @@ impl WsStream {
     fn new(inner: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Self {
         let (tx_command, mut rx_command) = mpsc::channel::<WsCommand>(32);
         let (tx_message, rx_message) = mpsc::unbounded_channel::<Result<Message, WsError>>();
+        set_abortive_linger(&inner);
 
         let pump_task = tokio::spawn(async move {
             let mut inner = inner;
             loop {
                 tokio::select! {
-                    command = rx_command.recv() => {
-                        let Some(command) = command else {
-                            break;
-                        };
-                        match command {
-                            WsCommand::Send { message, tx_result } => {
-                                let result = inner.send(message).await;
-                                let should_break = result.is_err();
-                                let _ = tx_result.send(result);
-                                if should_break {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    biased;
+
                     message = inner.next() => {
                         let Some(message) = message else {
                             break;
@@ -104,7 +92,19 @@ impl WsStream {
                             | Message::Binary(_)
                             | Message::Close(_)
                             | Message::Frame(_))) => {
+                                let should_abort_before_forwarding = match &message {
+                                    Message::Text(text) => {
+                                        should_abort_websocket_on_raw_event(text)
+                                    }
+                                    _ => false,
+                                };
                                 let is_close = matches!(message, Message::Close(_));
+                                if should_abort_before_forwarding {
+                                    set_abortive_linger(&inner);
+                                    drop(inner);
+                                    let _ = tx_message.send(Ok(message));
+                                    return;
+                                }
                                 if tx_message.send(Ok(message)).is_err() {
                                     break;
                                 }
@@ -115,6 +115,21 @@ impl WsStream {
                             Err(err) => {
                                 let _ = tx_message.send(Err(err));
                                 break;
+                            }
+                        }
+                    }
+                    command = rx_command.recv() => {
+                        let Some(command) = command else {
+                            break;
+                        };
+                        match command {
+                            WsCommand::Send { message, tx_result } => {
+                                let result = inner.send(message).await;
+                                let should_break = result.is_err();
+                                let _ = tx_result.send(result);
+                                if should_break {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -735,11 +750,388 @@ fn flush_buffered_response_events(
 }
 
 fn should_finish_response_before_server_completed(event: &ResponseEvent) -> bool {
-    matches!(
-        event,
-        ResponseEvent::OutputItemDone(ResponseItem::Message { role, phase, .. })
-            if role == "assistant" && !matches!(phase, Some(MessagePhase::Commentary))
-    )
+    let ResponseEvent::OutputItemDone(item) = event else {
+        return false;
+    };
+
+    match item {
+        ResponseItem::Message { role, phase, .. } => {
+            role == "assistant" && !matches!(phase, Some(MessagePhase::Commentary))
+        }
+        ResponseItem::FunctionCall { .. } | ResponseItem::CustomToolCall { .. } => true,
+        ResponseItem::ToolSearchCall {
+            call_id: Some(_),
+            execution,
+            ..
+        } => execution == "client",
+        _ => false,
+    }
+}
+
+fn should_abort_websocket_on_raw_event(text: &str) -> bool {
+    let mut scanner = JsonEventScanner::new(text);
+    scanner.skip_ws();
+    if !scanner.consume(b'{') {
+        return false;
+    };
+
+    let mut is_output_item_done = false;
+    loop {
+        scanner.skip_ws();
+        if scanner.consume(b'}') {
+            return false;
+        }
+        let Some(key) = scanner.take_string() else {
+            return false;
+        };
+        scanner.skip_ws();
+        if !scanner.consume(b':') {
+            return false;
+        }
+
+        match key {
+            "type" => {
+                let Some(kind) = scanner.take_string_value() else {
+                    return false;
+                };
+                if kind != "response.output_item.done" {
+                    return false;
+                }
+                is_output_item_done = true;
+            }
+            "item" if is_output_item_done => {
+                return scanner.scan_terminal_output_item();
+            }
+            _ => {
+                if !scanner.skip_value() {
+                    return false;
+                }
+            }
+        }
+
+        scanner.skip_ws();
+        if scanner.consume(b',') {
+            continue;
+        }
+        if scanner.consume(b'}') {
+            return false;
+        }
+        return false;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RawItemKind {
+    Message,
+    ToolSearchCall,
+}
+
+struct JsonEventScanner<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> JsonEventScanner<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            bytes: text.as_bytes(),
+            pos: 0,
+        }
+    }
+
+    fn scan_terminal_output_item(&mut self) -> bool {
+        self.skip_ws();
+        if !self.consume(b'{') {
+            return false;
+        }
+
+        let mut kind: Option<RawItemKind> = None;
+        let mut role: Option<&'a str> = None;
+        let mut phase: Option<&'a str> = None;
+        let mut execution: Option<&'a str> = None;
+        let mut call_id_seen = false;
+
+        loop {
+            self.skip_ws();
+            if self.consume(b'}') {
+                return terminal_raw_item_final_decision(
+                    kind,
+                    role,
+                    phase,
+                    execution,
+                    call_id_seen,
+                );
+            }
+            let Some(key) = self.take_string() else {
+                return false;
+            };
+            self.skip_ws();
+            if !self.consume(b':') {
+                return false;
+            }
+
+            match key {
+                "type" => {
+                    let Some(value) = self.take_string_value() else {
+                        return false;
+                    };
+                    match value {
+                        "function_call" | "custom_tool_call" => return true,
+                        "message" => kind = Some(RawItemKind::Message),
+                        "tool_search_call" => kind = Some(RawItemKind::ToolSearchCall),
+                        _ => return false,
+                    }
+                }
+                "role" => role = self.take_string_value_or_skip(),
+                "phase" => phase = self.take_string_value_or_skip(),
+                "execution" => execution = self.take_string_value_or_skip(),
+                "call_id" => call_id_seen = self.take_string_value_or_skip().is_some(),
+                _ => {
+                    if !self.skip_value() {
+                        return false;
+                    }
+                }
+            }
+
+            if let Some(decision) =
+                terminal_raw_item_decision(kind, role, phase, execution, call_id_seen)
+            {
+                return decision;
+            }
+
+            self.skip_ws();
+            if self.consume(b',') {
+                continue;
+            }
+            if self.consume(b'}') {
+                return terminal_raw_item_final_decision(
+                    kind,
+                    role,
+                    phase,
+                    execution,
+                    call_id_seen,
+                );
+            }
+            return false;
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+            self.pos += 1;
+        }
+    }
+
+    fn consume(&mut self, expected: u8) -> bool {
+        if self.peek() == Some(expected) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.bytes.get(self.pos).copied()
+    }
+
+    fn take_string_value(&mut self) -> Option<&'a str> {
+        self.skip_ws();
+        self.take_string()
+    }
+
+    fn take_string_value_or_skip(&mut self) -> Option<&'a str> {
+        self.skip_ws();
+        if self.peek() == Some(b'"') {
+            self.take_string()
+        } else {
+            let _ = self.skip_value();
+            None
+        }
+    }
+
+    fn take_string(&mut self) -> Option<&'a str> {
+        if !self.consume(b'"') {
+            return None;
+        }
+        let start = self.pos;
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'"' => {
+                    let end = self.pos;
+                    self.pos += 1;
+                    return std::str::from_utf8(&self.bytes[start..end]).ok();
+                }
+                b'\\' => {
+                    return None;
+                }
+                _ => {
+                    self.pos += 1;
+                }
+            }
+        }
+        None
+    }
+
+    fn skip_value(&mut self) -> bool {
+        self.skip_ws();
+        match self.peek() {
+            Some(b'"') => self.skip_string(),
+            Some(b'{' | b'[') => self.skip_compound(),
+            Some(b't') => self.consume_literal(b"true"),
+            Some(b'f') => self.consume_literal(b"false"),
+            Some(b'n') => self.consume_literal(b"null"),
+            Some(b'-' | b'0'..=b'9') => self.skip_number(),
+            _ => false,
+        }
+    }
+
+    fn skip_string(&mut self) -> bool {
+        if !self.consume(b'"') {
+            return false;
+        }
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'"' => {
+                    self.pos += 1;
+                    return true;
+                }
+                b'\\' => {
+                    self.pos += 1;
+                    if self.pos >= self.bytes.len() {
+                        return false;
+                    }
+                    self.pos += 1;
+                }
+                _ => {
+                    self.pos += 1;
+                }
+            }
+        }
+        false
+    }
+
+    fn skip_compound(&mut self) -> bool {
+        let Some(open) = self.peek() else {
+            return false;
+        };
+        let close = match open {
+            b'{' => b'}',
+            b'[' => b']',
+            _ => return false,
+        };
+        self.pos += 1;
+        let mut stack = vec![close];
+
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'"' => {
+                    if !self.skip_string() {
+                        return false;
+                    }
+                }
+                b'{' => {
+                    self.pos += 1;
+                    stack.push(b'}');
+                }
+                b'[' => {
+                    self.pos += 1;
+                    stack.push(b']');
+                }
+                b'}' | b']' => {
+                    let close = self.bytes[self.pos];
+                    self.pos += 1;
+                    if stack.pop() != Some(close) {
+                        return false;
+                    }
+                    if stack.is_empty() {
+                        return true;
+                    }
+                }
+                _ => {
+                    self.pos += 1;
+                }
+            }
+        }
+        false
+    }
+
+    fn consume_literal(&mut self, literal: &[u8]) -> bool {
+        if self.bytes[self.pos..].starts_with(literal) {
+            self.pos += literal.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn skip_number(&mut self) -> bool {
+        let start = self.pos;
+        while let Some(byte) = self.peek() {
+            if matches!(byte, b',' | b'}' | b']' | b' ' | b'\n' | b'\r' | b'\t') {
+                break;
+            }
+            self.pos += 1;
+        }
+        self.pos > start
+    }
+}
+
+fn terminal_raw_item_decision(
+    kind: Option<RawItemKind>,
+    role: Option<&str>,
+    phase: Option<&str>,
+    execution: Option<&str>,
+    call_id_seen: bool,
+) -> Option<bool> {
+    match kind {
+        Some(RawItemKind::Message) => {
+            if let Some(role) = role
+                && role != "assistant"
+            {
+                return Some(false);
+            }
+            if phase == Some("commentary") {
+                return Some(false);
+            }
+            if role == Some("assistant") && phase.is_some() {
+                return Some(true);
+            }
+            None
+        }
+        Some(RawItemKind::ToolSearchCall) => {
+            if let Some(execution) = execution
+                && execution != "client"
+            {
+                return Some(false);
+            }
+            if execution == Some("client") && call_id_seen {
+                return Some(true);
+            }
+            None
+        }
+        None => None,
+    }
+}
+
+fn terminal_raw_item_final_decision(
+    kind: Option<RawItemKind>,
+    role: Option<&str>,
+    phase: Option<&str>,
+    execution: Option<&str>,
+    call_id_seen: bool,
+) -> bool {
+    match kind {
+        Some(RawItemKind::Message) => role == Some("assistant") && phase != Some("commentary"),
+        Some(RawItemKind::ToolSearchCall) => execution == Some("client") && call_id_seen,
+        None => false,
+    }
+}
+
+fn set_abortive_linger(stream: &WebSocketStream<MaybeTlsStream<TcpStream>>) {
+    if let Err(err) = stream.get_ref().get_ref().set_zero_linger() {
+        trace!("failed to set abortive websocket close: {err}");
+    }
 }
 
 fn synthetic_response_completed_event() -> ResponseEvent {
@@ -1065,7 +1457,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_assistant_message_finishes_before_server_completed() {
+    fn terminal_output_items_finish_before_server_completed() {
         assert!(should_finish_response_before_server_completed(
             &assistant_message_done(None)
         ));
@@ -1077,6 +1469,49 @@ mod tests {
         ));
         assert!(!should_finish_response_before_server_completed(
             &ResponseEvent::Created
+        ));
+        assert!(should_finish_response_before_server_completed(
+            &function_call_done()
+        ));
+        assert!(should_finish_response_before_server_completed(
+            &custom_tool_call_done()
+        ));
+        assert!(should_finish_response_before_server_completed(
+            &client_tool_search_call_done()
+        ));
+        assert!(!should_finish_response_before_server_completed(
+            &server_tool_search_call_done()
+        ));
+    }
+
+    #[test]
+    fn raw_custom_tool_call_done_aborts_reader_before_completed() {
+        let tool_call_done = r#"{"type":"response.output_item.done","item":{"id":"ctc_1","type":"custom_tool_call","status":"completed","call_id":"call_1","input":"*** Begin Patch\n*** End Patch\n","name":"apply_patch"},"output_index":2,"sequence_number":623}"#;
+        let completed = json!({
+            "type": "response.completed",
+            "response": {
+                "id": "resp_1",
+                "status": "completed",
+                "output": [],
+                "parallel_tool_calls": false
+            },
+            "sequence_number": 624
+        })
+        .to_string();
+
+        assert!(should_abort_websocket_on_raw_event(tool_call_done));
+        assert!(!should_abort_websocket_on_raw_event(&completed));
+        assert!(should_abort_websocket_on_raw_event(
+            r#"{"type":"response.output_item.done","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#
+        ));
+        assert!(!should_abort_websocket_on_raw_event(
+            r#"{"type":"response.output_item.done","item":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"working"}]}}"#
+        ));
+        assert!(should_abort_websocket_on_raw_event(
+            r#"{"type":"response.output_item.done","item":{"type":"tool_search_call","call_id":"call_1","execution":"client","arguments":{"query":"rust"}}}"#
+        ));
+        assert!(!should_abort_websocket_on_raw_event(
+            r#"{"type":"response.output_item.done","item":{"type":"tool_search_call","call_id":"call_1","execution":"server","arguments":{"query":"rust"}}}"#
         ));
     }
 
@@ -1104,6 +1539,50 @@ mod tests {
                 text: "done".to_string(),
             }],
             phase,
+            internal_chat_message_metadata_passthrough: None,
+        })
+    }
+
+    fn function_call_done() -> ResponseEvent {
+        ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+            id: Some("fc-1".to_string()),
+            name: "exec_command".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: "call-1".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        })
+    }
+
+    fn custom_tool_call_done() -> ResponseEvent {
+        ResponseEvent::OutputItemDone(ResponseItem::CustomToolCall {
+            id: Some("ctc-1".to_string()),
+            status: Some("completed".to_string()),
+            call_id: "call-1".to_string(),
+            name: "apply_patch".to_string(),
+            input: "*** Begin Patch\n*** End Patch\n".to_string(),
+            internal_chat_message_metadata_passthrough: None,
+        })
+    }
+
+    fn client_tool_search_call_done() -> ResponseEvent {
+        ResponseEvent::OutputItemDone(ResponseItem::ToolSearchCall {
+            id: Some("tsc-1".to_string()),
+            call_id: Some("call-1".to_string()),
+            status: Some("completed".to_string()),
+            execution: "client".to_string(),
+            arguments: json!({"query": "rust"}),
+            internal_chat_message_metadata_passthrough: None,
+        })
+    }
+
+    fn server_tool_search_call_done() -> ResponseEvent {
+        ResponseEvent::OutputItemDone(ResponseItem::ToolSearchCall {
+            id: Some("tsc-1".to_string()),
+            call_id: Some("call-1".to_string()),
+            status: Some("completed".to_string()),
+            execution: "server".to_string(),
+            arguments: json!({"query": "rust"}),
             internal_chat_message_metadata_passthrough: None,
         })
     }
