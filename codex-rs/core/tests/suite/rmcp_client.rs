@@ -669,7 +669,8 @@ async fn stdio_server_round_trip() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shutdown_cancels_startup_prewarm_waiting_for_mcp_startup() -> anyhow::Result<()> {
+async fn shutdown_does_not_send_websocket_prewarm_while_mcp_startup_pending() -> anyhow::Result<()>
+{
     skip_if_no_network!(Ok(()));
 
     let server = responses::start_websocket_server(vec![vec![vec![
@@ -700,14 +701,14 @@ async fn shutdown_cancels_startup_prewarm_waiting_for_mcp_startup() -> anyhow::R
     let (_pending_mcp_connection, _) =
         tokio::time::timeout(Duration::from_secs(5), pending_mcp_listener.accept())
             .await
-            .context("startup prewarm should start the MCP connection")??;
+            .context("startup should start the MCP connection")??;
     tokio::time::timeout(Duration::from_secs(2), fixture.codex.shutdown_and_wait())
         .await
-        .context("shutdown should not wait for startup prewarm MCP startup")??;
+        .context("shutdown should not wait for startup prewarm")??;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(
         server.connections().is_empty(),
-        "startup prewarm should not send a websocket request after shutdown"
+        "startup should not send a websocket prewarm request"
     );
 
     server.shutdown().await;

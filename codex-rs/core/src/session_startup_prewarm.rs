@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::info;
@@ -10,17 +9,11 @@ use tracing::instrument;
 use tracing::warn;
 
 use crate::client::ModelClientSession;
-use crate::guardian::routes_approval_to_guardian;
-use crate::responses_metadata::CodexResponsesRequestKind;
-use crate::session::INITIAL_SUBMIT_ID;
 use crate::session::session::Session;
-use crate::session::turn::build_prompt;
-use crate::session::turn::built_tools;
 use codex_otel::STARTUP_PREWARM_AGE_AT_FIRST_TURN_METRIC;
 use codex_otel::STARTUP_PREWARM_DURATION_METRIC;
 use codex_otel::SessionTelemetry;
 use codex_protocol::error::Result as CodexResult;
-use codex_protocol::models::BaseInstructions;
 
 pub(crate) struct SessionStartupPrewarmHandle {
     task: AbortOnDropHandle<CodexResult<ModelClientSession>>,
@@ -38,8 +31,9 @@ pub(crate) enum SessionStartupPrewarmResolution {
 }
 
 impl SessionStartupPrewarmHandle {
+    #[cfg(test)]
     pub(crate) fn new(
-        task: JoinHandle<CodexResult<ModelClientSession>>,
+        task: tokio::task::JoinHandle<CodexResult<ModelClientSession>>,
         started_at: Instant,
         timeout: Duration,
     ) -> Self {
@@ -181,38 +175,7 @@ impl SessionStartupPrewarmHandle {
 }
 
 impl Session {
-    pub(crate) async fn schedule_startup_prewarm(self: &Arc<Self>, base_instructions: String) {
-        if !self.services.model_client.responses_websocket_enabled() {
-            return;
-        }
-
-        let session_telemetry = self.services.session_telemetry.clone();
-        let websocket_connect_timeout = self.provider().await.websocket_connect_timeout();
-        let started_at = Instant::now();
-        let startup_prewarm_session = Arc::clone(self);
-        let startup_prewarm = tokio::spawn(async move {
-            let result =
-                schedule_startup_prewarm_inner(startup_prewarm_session, base_instructions).await;
-            let status = if result.is_ok() { "ready" } else { "failed" };
-            session_telemetry.record_startup_phase(
-                "startup_prewarm_total",
-                started_at.elapsed(),
-                Some(status),
-            );
-            session_telemetry.record_duration(
-                STARTUP_PREWARM_DURATION_METRIC,
-                started_at.elapsed(),
-                &[("status", status)],
-            );
-            result
-        });
-        self.set_session_startup_prewarm(SessionStartupPrewarmHandle::new(
-            startup_prewarm,
-            started_at,
-            websocket_connect_timeout,
-        ))
-        .await;
-    }
+    pub(crate) async fn schedule_startup_prewarm(self: &Arc<Self>, _base_instructions: String) {}
 
     pub(crate) async fn consume_startup_prewarm_for_regular_turn(
         &self,
@@ -228,86 +191,4 @@ impl Session {
             .resolve(&self.services.session_telemetry, cancellation_token)
             .await
     }
-}
-
-async fn schedule_startup_prewarm_inner(
-    session: Arc<Session>,
-    base_instructions: String,
-) -> CodexResult<ModelClientSession> {
-    let prewarm_started_at = Instant::now();
-    let startup_turn_context = session
-        .new_startup_prewarm_turn_with_sub_id(INITIAL_SUBMIT_ID.to_owned())
-        .await;
-    startup_turn_context.session_telemetry.record_startup_phase(
-        "startup_prewarm_create_turn_context",
-        prewarm_started_at.elapsed(),
-        /*status*/ None,
-    );
-    if routes_approval_to_guardian(&startup_turn_context) {
-        let guardian_session = Arc::clone(&session);
-        let guardian_parent_turn = Arc::clone(&startup_turn_context);
-        drop(tokio::spawn(async move {
-            if let Err(err) = guardian_session
-                .guardian_review_session
-                .initialize(Arc::clone(&guardian_session), guardian_parent_turn)
-                .await
-            {
-                warn!("failed to initialize guardian review session: {err:#}");
-            }
-        }));
-    }
-    let startup_cancellation_token = CancellationToken::new();
-    let built_tools_started_at = Instant::now();
-    let startup_router = built_tools(
-        session.as_ref(),
-        startup_turn_context.as_ref(),
-        &startup_cancellation_token,
-    )
-    .await?;
-    startup_turn_context.session_telemetry.record_startup_phase(
-        "startup_prewarm_build_tools",
-        built_tools_started_at.elapsed(),
-        /*status*/ None,
-    );
-    let build_prompt_started_at = Instant::now();
-    let startup_prompt = build_prompt(
-        Vec::new(),
-        startup_router.as_ref(),
-        startup_turn_context.as_ref(),
-        BaseInstructions {
-            text: base_instructions,
-        },
-    );
-    startup_turn_context.session_telemetry.record_startup_phase(
-        "startup_prewarm_build_prompt",
-        build_prompt_started_at.elapsed(),
-        /*status*/ None,
-    );
-    let window_id = session.current_window_id().await;
-    let responses_metadata = startup_turn_context
-        .turn_metadata_state
-        .to_responses_metadata(
-            session.installation_id.clone(),
-            window_id,
-            CodexResponsesRequestKind::Prewarm,
-        );
-    let mut client_session = session.services.model_client.new_session();
-    let websocket_warmup_started_at = Instant::now();
-    client_session
-        .prewarm_websocket(
-            &startup_prompt,
-            &startup_turn_context.model_info,
-            &startup_turn_context.session_telemetry,
-            startup_turn_context.reasoning_effort.clone(),
-            startup_turn_context.reasoning_summary,
-            startup_turn_context.config.service_tier.clone(),
-            &responses_metadata,
-        )
-        .await?;
-    startup_turn_context.session_telemetry.record_startup_phase(
-        "startup_prewarm_websocket_warmup",
-        websocket_warmup_started_at.elapsed(),
-        /*status*/ None,
-    );
-    Ok(client_session)
 }

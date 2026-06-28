@@ -3713,10 +3713,6 @@ async fn remote_mid_turn_compact_v2_omits_websocket_client_metadata() -> Result<
 
     let server = start_websocket_server(vec![
         vec![vec![
-            responses::ev_response_created("warm-1"),
-            responses::ev_completed("warm-1"),
-        ]],
-        vec![vec![
             json!({
                 "type": "response.metadata",
                 "headers": {(TURN_STATE_HEADER): "sampling-state"},
@@ -3760,8 +3756,7 @@ async fn remote_mid_turn_compact_v2_omits_websocket_client_metadata() -> Result<
         });
     let test = builder.build_with_websocket_server(&server).await?;
 
-    // Phase 1: startup prewarm stays empty, then WebSocket sampling mints state and schedules
-    // inline v2 compaction.
+    // Phase 1: WebSocket sampling mints state and schedules inline v2 compaction.
     test.codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
@@ -3777,11 +3772,10 @@ async fn remote_mid_turn_compact_v2_omits_websocket_client_metadata() -> Result<
     wait_for_turn_complete(&test.codex).await;
 
     let requests: Vec<_> = server.connections().into_iter().flatten().collect();
-    assert_eq!(requests.len(), 5);
-    assert_eq!(requests[0].body_json()["generate"].as_bool(), Some(false));
+    assert_eq!(requests.len(), 4);
     // Phase 2: the v2 compact request replays the state already established by sampling.
     assert!(
-        requests[2]
+        requests[1]
             .body_json()
             .to_string()
             .contains("\"type\":\"compaction_trigger\"")

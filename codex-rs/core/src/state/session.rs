@@ -233,6 +233,7 @@ impl SessionState {
         self.mcp_dependency_prompted.clone()
     }
 
+    #[cfg(test)]
     pub(crate) fn set_session_startup_prewarm(
         &mut self,
         startup_prewarm: SessionStartupPrewarmHandle,

@@ -292,6 +292,7 @@ impl Drop for EphemeralReviewCleanup {
 }
 
 impl GuardianReviewSessionManager {
+    #[allow(dead_code)]
     pub(crate) fn initialize(
         &self,
         parent_session: Arc<Session>,

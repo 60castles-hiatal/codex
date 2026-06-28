@@ -10,6 +10,8 @@ use crate::sse::process_responses_event;
 use crate::telemetry::WebsocketTelemetry;
 use codex_client::TransportError;
 use codex_client::maybe_build_rustls_client_config_with_custom_ca;
+use codex_protocol::models::MessagePhase;
+use codex_protocol::models::ResponseItem;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use futures::SinkExt;
 use futures::StreamExt;
@@ -732,6 +734,25 @@ fn flush_buffered_response_events(
     });
 }
 
+fn should_finish_response_before_server_completed(event: &ResponseEvent) -> bool {
+    matches!(
+        event,
+        ResponseEvent::OutputItemDone(ResponseItem::Message { role, phase, .. })
+            if role == "assistant" && !matches!(phase, Some(MessagePhase::Commentary))
+    )
+}
+
+fn synthetic_response_completed_event() -> ResponseEvent {
+    ResponseEvent::Completed {
+        // We intentionally do not reuse the server response id here. Dropping
+        // before the server's completion bookkeeping makes that id unsafe for
+        // later `previous_response_id` requests.
+        response_id: String::new(),
+        token_usage: None,
+        end_turn: Some(true),
+    }
+}
+
 async fn run_websocket_response_stream(
     ws_stream: &mut WsStream,
     tx_event: mpsc::Sender<ResponseEventResult>,
@@ -842,8 +863,19 @@ async fn run_websocket_response_stream(
                 }
                 match process_responses_event(event) {
                     Ok(Some(event)) => {
+                        let should_finish_before_completed =
+                            should_finish_response_before_server_completed(&event);
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
                         enqueue_response_event(&tx_event, &mut buffered_events, Ok(event))?;
+                        if should_finish_before_completed {
+                            enqueue_response_event(
+                                &tx_event,
+                                &mut buffered_events,
+                                Ok(synthetic_response_completed_event()),
+                            )?;
+                            flush_buffered_response_events(tx_event, buffered_events);
+                            return Ok(());
+                        }
                         if is_completed {
                             flush_buffered_response_events(tx_event, buffered_events);
                             return Ok(());
@@ -913,7 +945,6 @@ mod tests {
     use crate::common::ContextManagement;
     use crate::common::ResponseCreateWsRequest;
     use codex_protocol::models::ContentItem;
-    use codex_protocol::models::ResponseItem;
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::collections::HashMap;
@@ -1031,6 +1062,50 @@ mod tests {
         assert_server_model(rx_event.recv().await, "second");
         assert_completed(rx_event.recv().await, "resp-1");
         assert!(rx_event.recv().await.is_none());
+    }
+
+    #[test]
+    fn terminal_assistant_message_finishes_before_server_completed() {
+        assert!(should_finish_response_before_server_completed(
+            &assistant_message_done(None)
+        ));
+        assert!(should_finish_response_before_server_completed(
+            &assistant_message_done(Some(MessagePhase::FinalAnswer))
+        ));
+        assert!(!should_finish_response_before_server_completed(
+            &assistant_message_done(Some(MessagePhase::Commentary))
+        ));
+        assert!(!should_finish_response_before_server_completed(
+            &ResponseEvent::Created
+        ));
+    }
+
+    #[test]
+    fn synthetic_completed_does_not_enable_previous_response_id() {
+        match synthetic_response_completed_event() {
+            ResponseEvent::Completed {
+                response_id,
+                token_usage,
+                end_turn,
+            } => {
+                assert_eq!(response_id, "");
+                assert!(token_usage.is_none());
+                assert_eq!(end_turn, Some(true));
+            }
+            other => panic!("expected synthetic Completed, got {other:?}"),
+        }
+    }
+
+    fn assistant_message_done(phase: Option<MessagePhase>) -> ResponseEvent {
+        ResponseEvent::OutputItemDone(ResponseItem::Message {
+            id: Some("msg-1".to_string()),
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: "done".to_string(),
+            }],
+            phase,
+            internal_chat_message_metadata_passthrough: None,
+        })
     }
 
     fn assert_server_model(event: Option<ResponseEventResult>, expected: &str) {

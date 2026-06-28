@@ -541,17 +541,11 @@ async fn turn_steer_updates_client_metadata_on_follow_up_responses_request_v2() 
 async fn turn_start_omits_client_metadata_from_responses_websocket_request_body_v2() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let websocket_server = responses::start_websocket_server(vec![
-        vec![vec![
-            responses::ev_response_created("warm-1"),
-            responses::ev_completed("warm-1"),
-        ]],
-        vec![vec![
-            responses::ev_response_created("resp-1"),
-            responses::ev_assistant_message("msg-1", "Done"),
-            responses::ev_completed("resp-1"),
-        ]],
-    ])
+    let websocket_server = responses::start_websocket_server(vec![vec![vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "Done"),
+        responses::ev_completed("resp-1"),
+    ]]])
     .await;
 
     let codex_home = TempDir::new()?;
@@ -598,7 +592,7 @@ async fn turn_start_omits_client_metadata_from_responses_websocket_request_body_
         mcp.read_stream_until_response_message(RequestId::Integer(turn_req)),
     )
     .await??;
-    let TurnStartResponse { turn } = to_response::<TurnStartResponse>(turn_resp)?;
+    let TurnStartResponse { turn: _ } = to_response::<TurnStartResponse>(turn_resp)?;
 
     timeout(
         DEFAULT_READ_TIMEOUT,
@@ -606,37 +600,14 @@ async fn turn_start_omits_client_metadata_from_responses_websocket_request_body_
     )
     .await??;
 
-    let warmup = websocket_server
+    let request = websocket_server
         .wait_for_request(/*connection_index*/ 0, /*request_index*/ 0)
         .await
         .body_json();
-    let request = websocket_server
-        .wait_for_request(/*connection_index*/ 1, /*request_index*/ 0)
-        .await
-        .body_json();
 
-    assert_eq!(warmup["type"].as_str(), Some("response.create"));
-    assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert_eq!(request["type"].as_str(), Some("response.create"));
     assert_eq!(request.get("previous_response_id"), None);
-    assert!(warmup.get("client_metadata").is_none());
     assert!(request.get("client_metadata").is_none());
-
-    let turn_handshake = &websocket_server.handshakes()[1];
-    let metadata = turn_handshake
-        .header("x-codex-turn-metadata")
-        .as_deref()
-        .map(parse_json_header)
-        .expect("websocket x-codex-turn-metadata handshake header should be present");
-    assert_eq!(metadata["fiber_run_id"].as_str(), Some("fiber-start-123"));
-    assert_eq!(metadata["origin"].as_str(), Some("gaas"));
-    assert_eq!(metadata["thread_source"].as_str(), Some("automation"));
-    assert_eq!(metadata["turn_id"].as_str(), Some(turn.id.as_str()));
-    assert!(metadata.get("session_id").is_some());
-    assert_eq!(
-        metadata["window_id"].as_str(),
-        turn_handshake.header("x-codex-window-id").as_deref()
-    );
 
     websocket_server.shutdown().await;
     Ok(())

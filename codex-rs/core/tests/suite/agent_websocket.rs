@@ -67,17 +67,14 @@ async fn websocket_test_codex_shell_chain() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
+async fn websocket_first_turn_opens_on_create() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server(vec![
-        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
-        vec![vec![
-            ev_response_created("resp-1"),
-            ev_assistant_message("msg-1", "hello"),
-            ev_completed("resp-1"),
-        ]],
-    ])
+    let server = start_websocket_server(vec![vec![vec![
+        ev_response_created("resp-1"),
+        ev_assistant_message("msg-1", "hello"),
+        ev_completed("resp-1"),
+    ]]])
     .await;
 
     let mut builder = test_codex();
@@ -85,25 +82,14 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
     test.submit_turn_with_policy("hello", test.config.legacy_sandbox_policy())
         .await?;
 
-    assert_eq!(server.handshakes().len(), 2);
+    assert_eq!(server.handshakes().len(), 1);
     let connections = server.connections();
-    assert_eq!(connections.len(), 2);
-    let warmup = connections[0]
-        .first()
-        .expect("missing warmup request")
-        .body_json();
-    let turn = connections[1]
+    assert_eq!(connections.len(), 1);
+    let turn = connections[0]
         .first()
         .expect("missing turn request")
         .body_json();
-    assert_eq!(warmup["type"].as_str(), Some("response.create"));
-    assert_eq!(warmup["generate"].as_bool(), Some(false));
-    assert!(warmup.get("client_metadata").is_none());
     assert!(turn.get("client_metadata").is_none());
-    let handshakes = server.handshakes();
-    let handshake = &handshakes[0];
-    assert_eq!(handshake.header("x-codex-turn-metadata"), None);
-    assert_eq!(handshake.header("x-codex-window-id"), None);
     assert!(
         turn["tools"]
             .as_array()
@@ -117,28 +103,20 @@ async fn websocket_first_turn_uses_startup_prewarm_and_create() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_first_turn_handles_handshake_delay_with_startup_prewarm() -> Result<()> {
+async fn websocket_first_turn_handles_handshake_delay() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server_with_headers(vec![
-        WebSocketConnectionConfig {
-            requests: vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
-            response_headers: Vec::new(),
-            // Delay handshake so turn processing must tolerate websocket startup latency.
-            accept_delay: Some(Duration::from_millis(150)),
-            close_after_requests: true,
-        },
-        WebSocketConnectionConfig {
-            requests: vec![vec![
-                ev_response_created("resp-1"),
-                ev_assistant_message("msg-1", "hello"),
-                ev_completed("resp-1"),
-            ]],
-            response_headers: Vec::new(),
-            accept_delay: None,
-            close_after_requests: true,
-        },
-    ])
+    let server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
+        requests: vec![vec![
+            ev_response_created("resp-1"),
+            ev_assistant_message("msg-1", "hello"),
+            ev_completed("resp-1"),
+        ]],
+        response_headers: Vec::new(),
+        // Delay handshake so turn processing must tolerate websocket startup latency.
+        accept_delay: Some(Duration::from_millis(150)),
+        close_after_requests: true,
+    }])
     .await;
 
     let mut builder = test_codex();
@@ -146,19 +124,13 @@ async fn websocket_first_turn_handles_handshake_delay_with_startup_prewarm() -> 
     test.submit_turn_with_policy("hello", test.config.legacy_sandbox_policy())
         .await?;
 
-    assert_eq!(server.handshakes().len(), 2);
+    assert_eq!(server.handshakes().len(), 1);
     let connections = server.connections();
-    assert_eq!(connections.len(), 2);
-    let warmup = connections[0]
-        .first()
-        .expect("missing warmup request")
-        .body_json();
-    let turn = connections[1]
+    assert_eq!(connections.len(), 1);
+    let turn = connections[0]
         .first()
         .expect("missing turn request")
         .body_json();
-    assert_eq!(warmup["type"].as_str(), Some("response.create"));
-    assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert!(
         turn["tools"]
             .as_array()
@@ -177,7 +149,6 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
 
     let call_id = "shell-command-call";
     let server = start_websocket_server(vec![
-        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
         vec![vec![
             ev_response_created("resp-1"),
             ev_shell_command_call(call_id, "echo websocket"),
@@ -203,23 +174,17 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
         .await?;
 
     let connections = server.connections();
-    assert_eq!(connections.len(), 3);
+    assert_eq!(connections.len(), 2);
 
-    let warmup = connections[0]
-        .first()
-        .expect("missing warmup request")
-        .body_json();
-    let first_turn = connections[1]
+    let first_turn = connections[0]
         .first()
         .expect("missing first turn request")
         .body_json();
-    let second_turn = connections[2]
+    let second_turn = connections[1]
         .first()
         .expect("missing second turn request")
         .body_json();
 
-    assert_eq!(warmup["type"].as_str(), Some("response.create"));
-    assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
     assert_eq!(first_turn.get("previous_response_id"), None);
     assert!(
@@ -258,17 +223,14 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() -> Result<()> {
+async fn websocket_v2_first_turn_uses_updated_fast_tier() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server(vec![
-        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
-        vec![vec![
-            ev_response_created("resp-1"),
-            ev_assistant_message("msg-1", "fast"),
-            ev_completed("resp-1"),
-        ]],
-    ])
+    let server = start_websocket_server(vec![vec![vec![
+        ev_response_created("resp-1"),
+        ev_assistant_message("msg-1", "fast"),
+        ev_completed("resp-1"),
+    ]]])
     .await;
 
     let mut builder = test_codex().with_config(|config| {
@@ -279,21 +241,13 @@ async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() 
     });
     let test = builder.build_with_websocket_server(&server).await?;
 
-    let warmup = server
-        .wait_for_request(/*connection_index*/ 0, /*request_index*/ 0)
-        .await
-        .body_json();
-    assert_eq!(warmup["type"].as_str(), Some("response.create"));
-    assert_eq!(warmup["generate"].as_bool(), Some(false));
-    assert_eq!(warmup.get("service_tier"), None);
-
     test.submit_turn_with_service_tier("hello", Some(ServiceTier::Fast.request_value()))
         .await?;
 
-    assert_eq!(server.handshakes().len(), 2);
+    assert_eq!(server.handshakes().len(), 1);
     let connections = server.connections();
-    assert_eq!(connections.len(), 2);
-    let first_turn = connections[1]
+    assert_eq!(connections.len(), 1);
+    let first_turn = connections[0]
         .first()
         .expect("missing first turn request")
         .body_json();
@@ -313,17 +267,14 @@ async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Result<()> {
+async fn websocket_v2_first_turn_drops_fast_tier() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let server = start_websocket_server(vec![
-        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
-        vec![vec![
-            ev_response_created("resp-1"),
-            ev_assistant_message("msg-1", "standard"),
-            ev_completed("resp-1"),
-        ]],
-    ])
+    let server = start_websocket_server(vec![vec![vec![
+        ev_response_created("resp-1"),
+        ev_assistant_message("msg-1", "standard"),
+        ev_completed("resp-1"),
+    ]]])
     .await;
 
     let mut builder = test_codex().with_config(|config| {
@@ -335,21 +286,13 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
     });
     let test = builder.build_with_websocket_server(&server).await?;
 
-    let warmup = server
-        .wait_for_request(/*connection_index*/ 0, /*request_index*/ 0)
-        .await
-        .body_json();
-    assert_eq!(warmup["type"].as_str(), Some("response.create"));
-    assert_eq!(warmup["generate"].as_bool(), Some(false));
-    assert_eq!(warmup["service_tier"].as_str(), Some("priority"));
-
     test.submit_turn_with_service_tier("hello", /*service_tier*/ None)
         .await?;
 
-    assert_eq!(server.handshakes().len(), 2);
+    assert_eq!(server.handshakes().len(), 1);
     let connections = server.connections();
-    assert_eq!(connections.len(), 2);
-    let first_turn = connections[1]
+    assert_eq!(connections.len(), 1);
+    let first_turn = connections[0]
         .first()
         .expect("missing first turn request")
         .body_json();
@@ -373,7 +316,6 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_websocket_server(vec![
-        vec![vec![ev_response_created("warm-1"), ev_completed("warm-1")]],
         vec![vec![
             ev_response_created("resp-1"),
             ev_assistant_message("msg-1", "fast"),
@@ -395,28 +337,20 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
     });
     let test = builder.build_with_websocket_server(&server).await?;
 
-    let warmup = server
-        .wait_for_request(/*connection_index*/ 0, /*request_index*/ 0)
-        .await
-        .body_json();
-    assert_eq!(warmup["type"].as_str(), Some("response.create"));
-    assert_eq!(warmup["generate"].as_bool(), Some(false));
-    assert_eq!(warmup.get("service_tier"), None);
-
     test.submit_turn_with_service_tier("first", Some(ServiceTier::Fast.request_value()))
         .await?;
     test.submit_turn_with_service_tier("second", /*service_tier*/ None)
         .await?;
 
-    assert_eq!(server.handshakes().len(), 3);
+    assert_eq!(server.handshakes().len(), 2);
     let connections = server.connections();
-    assert_eq!(connections.len(), 3);
+    assert_eq!(connections.len(), 2);
 
-    let first_turn = connections[1]
+    let first_turn = connections[0]
         .first()
         .expect("missing first turn request")
         .body_json();
-    let second_turn = connections[2]
+    let second_turn = connections[1]
         .first()
         .expect("missing second turn request")
         .body_json();

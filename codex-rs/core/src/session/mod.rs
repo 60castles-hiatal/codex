@@ -1497,6 +1497,7 @@ impl Session {
             .map(|configuration| configuration.thread_config_snapshot())
     }
 
+    #[cfg(test)]
     pub(crate) async fn set_session_startup_prewarm(
         &self,
         startup_prewarm: SessionStartupPrewarmHandle,

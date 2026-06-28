@@ -147,7 +147,6 @@ pub struct TurnContext {
 
 enum TurnMultiAgentRuntime {
     ResolveAndStore,
-    Preview,
 }
 
 impl TurnContext {
@@ -676,20 +675,6 @@ impl Session {
         .await
     }
 
-    async fn new_startup_prewarm_turn_from_configuration(
-        &self,
-        sub_id: String,
-        session_configuration: SessionConfiguration,
-    ) -> Arc<TurnContext> {
-        self.new_turn_context_from_configuration(
-            sub_id,
-            session_configuration,
-            /*final_output_json_schema*/ None,
-            TurnMultiAgentRuntime::Preview,
-        )
-        .await
-    }
-
     #[instrument(name = "turn_context.build", level = "trace", skip_all)]
     async fn new_turn_context_from_configuration(
         &self,
@@ -727,10 +712,6 @@ impl Session {
             TurnMultiAgentRuntime::ResolveAndStore => {
                 self.resolve_multi_agent_version_for_model(&model_info, &per_turn_config)
             }
-            TurnMultiAgentRuntime::Preview => self
-                .multi_agent_version()
-                .or(model_info.multi_agent_version)
-                .unwrap_or_else(|| per_turn_config.multi_agent_version_from_features()),
         };
         let plugins_input = per_turn_config.plugins_config_input();
         let plugin_outcome = self
@@ -825,15 +806,6 @@ impl Session {
             /*final_output_json_schema*/ None,
         )
         .await
-    }
-
-    pub(crate) async fn new_startup_prewarm_turn_with_sub_id(
-        &self,
-        sub_id: String,
-    ) -> Arc<TurnContext> {
-        let session_configuration = self.default_turn_configuration().await;
-        self.new_startup_prewarm_turn_from_configuration(sub_id, session_configuration)
-            .await
     }
 
     async fn default_turn_configuration(&self) -> SessionConfiguration {

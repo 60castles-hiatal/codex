@@ -12,17 +12,9 @@
 //! requests during that turn. It caches a Responses WebSocket connection (opened lazily) and stores
 //! per-turn state such as the `x-codex-turn-state` token used for sticky routing.
 //!
-//! WebSocket prewarm is a v2-only `response.create` with `generate=false`; it waits for completion
-//! so the next request can reuse the same connection and, when auth context has not changed,
-//! `previous_response_id`.
-//!
-//! Turn execution performs prewarm as a best-effort step before the first stream request so the
-//! subsequent request can reuse the same connection.
-//!
-//! ## Retry-Budget Tradeoff
-//!
-//! WebSocket prewarm is treated as the first websocket connection attempt for a turn. If it
-//! fails, normal stream retry/fallback logic handles recovery on the same turn.
+//! WebSocket connections are opened lazily by the first real stream request. Startup preconnect
+//! and `generate=false` request prewarm are disabled so no websocket traffic is sent before user
+//! input.
 
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -264,7 +256,6 @@ struct WebsocketSession {
     last_response_rx: Option<oneshot::Receiver<LastResponse>>,
     last_response_account_index: Option<usize>,
     last_response_rotation_generation: Option<u64>,
-    last_response_from_untraced_warmup: bool,
     connection_reused: StdMutex<bool>,
 }
 
@@ -356,7 +347,6 @@ enum WebsocketStreamOutcome {
 
 struct PreparedWebsocketRequest {
     request: ResponsesWsRequest,
-    previous_response_id_from_untraced_warmup: bool,
     previous_response_account_index: Option<usize>,
     previous_response_generation: Option<u64>,
 }
@@ -942,8 +932,8 @@ impl ModelClient {
 
     /// Opens a websocket connection using the same header and telemetry wiring as normal turns.
     ///
-    /// Both startup prewarm and in-turn `needs_new` reconnects call this path so handshake
-    /// behavior remains consistent across both flows.
+    /// Normal stream requests and in-turn `needs_new` reconnects call this path so handshake
+    /// behavior remains consistent across flows.
     #[allow(clippy::too_many_arguments)]
     async fn connect_websocket(
         &self,
@@ -1151,7 +1141,6 @@ impl ModelClientSession {
         self.websocket_session.last_response_rx = None;
         self.websocket_session.last_response_account_index = None;
         self.websocket_session.last_response_rotation_generation = None;
-        self.websocket_session.last_response_from_untraced_warmup = false;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1252,13 +1241,10 @@ impl ModelClientSession {
         else {
             return PreparedWebsocketRequest {
                 request: ResponsesWsRequest::ResponseCreate(payload),
-                previous_response_id_from_untraced_warmup: false,
                 previous_response_account_index: None,
                 previous_response_generation: None,
             };
         };
-        let previous_response_id_from_untraced_warmup =
-            self.websocket_session.last_response_from_untraced_warmup;
         let Some(incremental_items) = self.get_incremental_items(
             request,
             Some(&last_response),
@@ -1266,7 +1252,6 @@ impl ModelClientSession {
         ) else {
             return PreparedWebsocketRequest {
                 request: ResponsesWsRequest::ResponseCreate(payload),
-                previous_response_id_from_untraced_warmup: false,
                 previous_response_account_index: None,
                 previous_response_generation: None,
             };
@@ -1276,7 +1261,6 @@ impl ModelClientSession {
             trace!("incremental request failed, no previous response id");
             return PreparedWebsocketRequest {
                 request: ResponsesWsRequest::ResponseCreate(payload),
-                previous_response_id_from_untraced_warmup: false,
                 previous_response_account_index: None,
                 previous_response_generation: None,
             };
@@ -1288,7 +1272,6 @@ impl ModelClientSession {
                 input: incremental_items,
                 ..payload
             }),
-            previous_response_id_from_untraced_warmup,
             previous_response_account_index: last_response_account_index,
             previous_response_generation: last_response_generation,
         }
@@ -1296,53 +1279,13 @@ impl ModelClientSession {
 
     /// Opportunistically preconnects a websocket for this turn-scoped client session.
     ///
-    /// This performs only connection setup; it never sends prompt payloads.
+    /// Disabled: websocket connections are opened by the first real stream request so no
+    /// websocket traffic is sent before user input.
     pub async fn preconnect_websocket(
         &mut self,
-        session_telemetry: &SessionTelemetry,
-        responses_metadata: &CodexResponsesMetadata,
+        _session_telemetry: &SessionTelemetry,
+        _responses_metadata: &CodexResponsesMetadata,
     ) -> std::result::Result<(), ApiError> {
-        if !self.client.responses_websocket_enabled() {
-            return Ok(());
-        }
-        if self.websocket_session.connection.is_some() {
-            return Ok(());
-        }
-
-        let client_setup = self
-            .client
-            .current_websocket_client_setup()
-            .await
-            .map_err(|err| {
-                ApiError::Stream(format!(
-                    "failed to build websocket prewarm client setup: {err}"
-                ))
-            })?;
-        let auth_context = AuthRequestTelemetryContext::new(
-            client_setup.auth.as_ref().map(CodexAuth::auth_mode),
-            client_setup.api_auth.as_ref(),
-            PendingUnauthorizedRetry::default(),
-        );
-        let turn_state = self.turn_state_for_new_connection(client_setup.rotation_account_index);
-        let connection = self
-            .client
-            .connect_websocket(
-                session_telemetry,
-                client_setup.api_provider,
-                client_setup.api_auth,
-                responses_metadata,
-                auth_context,
-                RequestRouteTelemetry::for_endpoint(RESPONSES_ENDPOINT),
-            )
-            .await?;
-        self.websocket_session.connection = Some(self.connection_slot(
-            connection,
-            client_setup.rotation_account_index,
-            client_setup.rotation_generation,
-            turn_state,
-        ));
-        self.websocket_session
-            .set_connection_reused(/*connection_reused*/ false);
         Ok(())
     }
     /// Returns a websocket connection for this turn.
@@ -1700,8 +1643,7 @@ impl ModelClientSession {
             wire_api = %self.client.state.provider.info().wire_api,
             transport = "responses_websocket",
             api.path = "responses",
-            turn.has_metadata = responses_metadata.has_turn_metadata(),
-            websocket.warmup = warmup
+            turn.has_metadata = responses_metadata.has_turn_metadata()
         )
     )]
     async fn stream_responses_websocket(
@@ -1713,7 +1655,6 @@ impl ModelClientSession {
         summary: ReasoningSummaryConfig,
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
-        warmup: bool,
         inference_trace: &InferenceTraceContext,
         context_management: Option<Vec<ContextManagement>>,
     ) -> Result<WebsocketStreamOutcome> {
@@ -1739,10 +1680,7 @@ impl ModelClientSession {
                 service_tier.clone(),
                 context_management.clone(),
             )?;
-            let mut ws_payload = ResponseCreateWsRequest::from(&request);
-            if warmup {
-                ws_payload.generate = Some(false);
-            }
+            let ws_payload = ResponseCreateWsRequest::from(&request);
             let full_ws_request = ResponsesWsRequest::ResponseCreate(ws_payload.clone());
 
             let use_auth_rotation = self.client.auth_rotation()?.is_some();
@@ -1787,8 +1725,6 @@ impl ModelClientSession {
 
             let prepared_request = self.prepare_websocket_request(ws_payload, &request);
             let mut ws_request = prepared_request.request;
-            let mut previous_response_id_from_untraced_warmup =
-                prepared_request.previous_response_id_from_untraced_warmup;
             if use_auth_rotation {
                 match self
                     .websocket_connection(WebsocketConnectParams {
@@ -1837,31 +1773,16 @@ impl ModelClientSession {
                             "Codex auth rotation sending full websocket request after account swap or generation change"
                         );
                         ws_request = full_ws_request;
-                        previous_response_id_from_untraced_warmup = false;
                     }
                 }
             }
-            let inference_trace_attempt = if warmup {
-                // Prewarm sends `generate=false`; it is connection setup, not a
-                // model inference attempt that should appear in rollout traces.
-                InferenceTraceAttempt::disabled()
-            } else {
-                inference_trace.start_attempt()
-            };
+            let inference_trace_attempt = inference_trace.start_attempt();
             let ResponsesWsRequest::ResponseCreate(ws_payload) = &mut ws_request;
             let store = ws_payload.store;
             self.client
                 .prepare_response_items_for_request(&mut ws_payload.input, store);
-            if previous_response_id_from_untraced_warmup {
-                // The transport can reuse an untraced warmup response id and omit the
-                // already-sent input, but rollout replay needs the logical model-visible
-                // request rather than the compressed websocket delta.
-                inference_trace_attempt.record_started(&request);
-            } else {
-                inference_trace_attempt.record_started(&ws_request);
-            }
+            inference_trace_attempt.record_started(&ws_request);
             self.websocket_session.last_request = Some(request.clone());
-            self.websocket_session.last_response_from_untraced_warmup = warmup;
             let websocket_connection =
                 self.websocket_session.connection.as_ref().ok_or_else(|| {
                     map_api_error(ApiError::Stream(
@@ -1946,54 +1867,15 @@ impl ModelClientSession {
     #[allow(clippy::too_many_arguments)]
     pub async fn prewarm_websocket(
         &mut self,
-        prompt: &Prompt,
-        model_info: &ModelInfo,
-        session_telemetry: &SessionTelemetry,
-        effort: Option<ReasoningEffortConfig>,
-        summary: ReasoningSummaryConfig,
-        service_tier: Option<String>,
-        responses_metadata: &CodexResponsesMetadata,
+        _prompt: &Prompt,
+        _model_info: &ModelInfo,
+        _session_telemetry: &SessionTelemetry,
+        _effort: Option<ReasoningEffortConfig>,
+        _summary: ReasoningSummaryConfig,
+        _service_tier: Option<String>,
+        _responses_metadata: &CodexResponsesMetadata,
     ) -> Result<()> {
-        if !self.client.responses_websocket_enabled() {
-            return Ok(());
-        }
-        if self.websocket_session.last_request.is_some() {
-            return Ok(());
-        }
-
-        let disabled_trace = InferenceTraceContext::disabled();
-        match self
-            .stream_responses_websocket(
-                prompt,
-                model_info,
-                session_telemetry,
-                effort,
-                summary,
-                service_tier,
-                responses_metadata,
-                /*warmup*/ true,
-                &disabled_trace,
-                /*context_management*/ None,
-            )
-            .await
-        {
-            Ok(WebsocketStreamOutcome::Stream(mut stream)) => {
-                // Wait for the v2 warmup request to complete before sending the first turn request.
-                while let Some(event) = stream.next().await {
-                    match event {
-                        Ok(ResponseEvent::Completed { .. }) => break,
-                        Err(err) => return Err(err),
-                        _ => {}
-                    }
-                }
-                Ok(())
-            }
-            Ok(WebsocketStreamOutcome::FallbackToHttp) => {
-                self.try_switch_fallback_transport(session_telemetry, model_info);
-                Ok(())
-            }
-            Err(err) => Err(err),
-        }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2030,7 +1912,6 @@ impl ModelClientSession {
                             summary,
                             service_tier.clone(),
                             responses_metadata,
-                            /*warmup*/ false,
                             inference_trace,
                             context_management.clone(),
                         )

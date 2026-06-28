@@ -3858,6 +3858,50 @@ async fn context_management_compaction_sends_threshold_from_max_context_window()
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_management_compaction_honours_configured_context_window_override() {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("m1", FIRST_REPLY),
+            ev_completed("r1"),
+        ]),
+    )
+    .await;
+    let model_provider = openai_model_provider(&server);
+    let test = test_codex()
+        .with_model("gpt-5.4")
+        .with_model_info_override("gpt-5.4", |model_info| {
+            model_info.context_window = Some(272_000);
+            model_info.max_context_window = Some(272_000);
+        })
+        .with_config(move |config| {
+            config.model_provider = model_provider;
+            config
+                .model_context_window_overrides
+                .insert("gpt-5.4".to_string(), 50_000);
+            config.model_auto_compact_token_limit = None;
+            let _ = config.features.enable(Feature::AutoCompaction);
+            let _ = config.features.enable(Feature::ContextManagementCompaction);
+        })
+        .build(&server)
+        .await
+        .expect("build codex");
+
+    test.submit_turn("CONTEXT_MANAGEMENT_CONFIG_OVERRIDE")
+        .await
+        .expect("submit turn");
+
+    let body = response_mock.single_request().body_json();
+    assert_eq!(
+        body.get("context_management"),
+        Some(&json!([{"type": "compaction", "compact_threshold": 45000}]))
+    );
+}
+
 async fn assert_context_management_compaction_omitted(
     server: &MockServer,
     model_provider: ModelProviderInfo,
