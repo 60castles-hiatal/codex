@@ -210,7 +210,7 @@ async fn responses_lite_compact_request_uses_lite_transport_contract() -> Result
     );
     assert_eq!(
         compact_body.get("parallel_tool_calls"),
-        Some(&Value::Bool(false))
+        Some(&Value::Bool(true))
     );
 
     Ok(())

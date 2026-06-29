@@ -1251,13 +1251,21 @@ pub(crate) fn build_prompt(
     Prompt {
         input,
         tools: router.model_visible_specs(),
-        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+        parallel_tool_calls: supports_parallel_tool_calls_for_turn(turn_context),
         base_instructions,
         output_schema: turn_context.final_output_json_schema.clone(),
         output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
             &turn_context.session_source,
         ),
     }
+}
+
+pub(crate) fn supports_parallel_tool_calls_for_turn(turn_context: &TurnContext) -> bool {
+    turn_context.model_info.supports_parallel_tool_calls
+        && !turn_context
+            .config
+            .features
+            .enabled(Feature::WebsocketHangup)
 }
 
 fn rewrite_current_turn_user_messages_as_developer(

@@ -1149,6 +1149,7 @@ async fn send_provider_auth_request(server: &MockServer, auth: ModelProviderAuth
         config.model_verbosity,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
+        /*websocket_hangup_enabled*/ false,
         /*beta_features_header*/ None,
         /*item_ids_enabled*/ config.features.enabled(Feature::ItemIds),
         /*attestation_provider*/ None,
@@ -2231,8 +2232,8 @@ async fn configured_reasoning_summary_is_sent() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_lite_sets_all_turns_context_and_disables_parallel_tool_calls()
--> anyhow::Result<()> {
+async fn responses_lite_sets_all_turns_context_and_keeps_parallel_tool_calls() -> anyhow::Result<()>
+{
     skip_if_no_network!(Ok(()));
     let server = MockServer::start().await;
 
@@ -2273,6 +2274,52 @@ async fn responses_lite_sets_all_turns_context_and_disables_parallel_tool_calls(
             .and_then(|value| value.as_str()),
         Some("all_turns")
     );
+    pretty_assertions::assert_eq!(request_body.get("parallel_tool_calls"), Some(&json!(true)));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn websocket_hangup_disables_parallel_tool_calls() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = MockServer::start().await;
+
+    let resp_mock = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp1"), ev_completed("resp1")]),
+    )
+    .await;
+
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::WebsocketHangup)
+                .expect("test config should allow feature update");
+            config.model_provider.supports_websockets = false;
+        })
+        .with_model_info_override("gpt-5.4", |model_info| {
+            model_info.supports_parallel_tool_calls = true;
+        })
+        .build(&server)
+        .await?;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request_body = resp_mock.single_request().body_json();
     pretty_assertions::assert_eq!(request_body.get("parallel_tool_calls"), Some(&json!(false)));
 
     Ok(())
@@ -2758,6 +2805,7 @@ async fn azure_responses_request_includes_store_and_reasoning_ids() {
         config.model_verbosity,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
+        /*websocket_hangup_enabled*/ false,
         /*beta_features_header*/ None,
         /*item_ids_enabled*/ false,
         /*attestation_provider*/ None,

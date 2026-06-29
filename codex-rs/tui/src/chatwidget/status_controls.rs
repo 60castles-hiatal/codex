@@ -351,7 +351,16 @@ impl ChatWidget {
         self.token_info
             .as_ref()
             .and_then(|info| info.model_context_window)
-            .or(self.config.model_context_window)
+            .or_else(|| self.configured_context_window_for_current_model())
+    }
+
+    pub(super) fn configured_context_window_for_current_model(&self) -> Option<i64> {
+        self.config.model_context_window.or_else(|| {
+            self.config
+                .model_context_window_overrides
+                .get(self.current_model())
+                .copied()
+        })
     }
 
     pub(super) fn status_line_context_remaining_percent(&self) -> Option<i64> {

@@ -107,6 +107,40 @@ async fn context_indicator_shows_used_tokens_when_window_unknown() {
 }
 
 #[tokio::test]
+async fn context_indicator_uses_model_override_when_runtime_window_missing() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(Some("gpt-5.5")).await;
+
+    chat.config.model_context_window = None;
+    chat.config
+        .model_context_window_overrides
+        .insert("gpt-5.5".to_string(), 340_000);
+
+    assert_eq!(
+        chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::ContextWindowSize),
+        Some("340K window".to_string())
+    );
+
+    let token_usage = TokenUsage {
+        total_tokens: 85_000,
+        ..TokenUsage::default()
+    };
+    let token_info = TokenUsageInfo {
+        total_token_usage: token_usage.clone(),
+        last_token_usage: token_usage,
+        model_context_window: None,
+    };
+
+    handle_token_count(&mut chat, Some(token_info));
+
+    assert_eq!(chat.bottom_pane.context_window_percent(), Some(78));
+    assert_eq!(chat.bottom_pane.context_window_used_tokens(), None);
+    assert_eq!(
+        chat.status_line_value_for_item(crate::bottom_pane::StatusLineItem::ContextRemaining),
+        Some("Context 78% left".to_string())
+    );
+}
+
+#[tokio::test]
 async fn token_usage_update_uses_runtime_context_window() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 

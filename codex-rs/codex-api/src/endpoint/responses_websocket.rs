@@ -65,10 +65,12 @@ enum WsCommand {
 }
 
 impl WsStream {
-    fn new(inner: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Self {
+    fn new(inner: WebSocketStream<MaybeTlsStream<TcpStream>>, early_hangup_enabled: bool) -> Self {
         let (tx_command, mut rx_command) = mpsc::channel::<WsCommand>(32);
         let (tx_message, rx_message) = mpsc::unbounded_channel::<Result<Message, WsError>>();
-        set_abortive_linger(&inner);
+        if early_hangup_enabled {
+            set_abortive_linger(&inner);
+        }
 
         let pump_task = tokio::spawn(async move {
             let mut inner = inner;
@@ -92,12 +94,13 @@ impl WsStream {
                             | Message::Binary(_)
                             | Message::Close(_)
                             | Message::Frame(_))) => {
-                                let should_abort_before_forwarding = match &message {
-                                    Message::Text(text) => {
-                                        should_abort_websocket_on_raw_event(text)
-                                    }
-                                    _ => false,
-                                };
+                                let should_abort_before_forwarding = early_hangup_enabled
+                                    && match &message {
+                                        Message::Text(text) => {
+                                            should_abort_websocket_on_raw_event(text)
+                                        }
+                                        _ => false,
+                                    };
                                 let is_close = matches!(message, Message::Close(_));
                                 if should_abort_before_forwarding {
                                     set_abortive_linger(&inner);
@@ -187,6 +190,7 @@ pub struct ResponsesWebsocketConnection {
     stream: Arc<Mutex<Option<WsStream>>>,
     // TODO (pakrym): is this the right place for timeout?
     idle_timeout: Duration,
+    early_hangup_enabled: bool,
     server_reasoning_included: bool,
     models_etag: Option<String>,
     server_model: Option<String>,
@@ -198,6 +202,7 @@ impl std::fmt::Debug for ResponsesWebsocketConnection {
         f.debug_struct("ResponsesWebsocketConnection")
             .field("stream", &"<ws-stream>")
             .field("idle_timeout", &self.idle_timeout)
+            .field("early_hangup_enabled", &self.early_hangup_enabled)
             .field("server_reasoning_included", &self.server_reasoning_included)
             .field("models_etag", &self.models_etag)
             .field("server_model", &self.server_model)
@@ -210,6 +215,7 @@ impl ResponsesWebsocketConnection {
     fn new(
         stream: WsStream,
         idle_timeout: Duration,
+        early_hangup_enabled: bool,
         server_reasoning_included: bool,
         models_etag: Option<String>,
         server_model: Option<String>,
@@ -218,6 +224,7 @@ impl ResponsesWebsocketConnection {
         Self {
             stream: Arc::new(Mutex::new(Some(stream))),
             idle_timeout,
+            early_hangup_enabled,
             server_reasoning_included,
             models_etag,
             server_model,
@@ -246,6 +253,7 @@ impl ResponsesWebsocketConnection {
         );
         let stream = Arc::clone(&self.stream);
         let idle_timeout = self.idle_timeout;
+        let early_hangup_enabled = self.early_hangup_enabled;
         let server_reasoning_included = self.server_reasoning_included;
         let models_etag = self.models_etag.clone();
         let server_model = self.server_model.clone();
@@ -289,6 +297,7 @@ impl ResponsesWebsocketConnection {
                         telemetry,
                         connection_reused,
                         turn_state.as_deref(),
+                        early_hangup_enabled,
                     )
                     .await
                 };
@@ -371,6 +380,7 @@ impl ResponsesWebsocketClient {
         default_headers: HeaderMap,
         turn_state: Option<Arc<OnceLock<String>>>,
         telemetry: Option<Arc<dyn WebsocketTelemetry>>,
+        early_hangup_enabled: bool,
     ) -> Result<ResponsesWebsocketConnection, ApiError> {
         let ws_url = self
             .provider
@@ -382,10 +392,11 @@ impl ResponsesWebsocketClient {
         self.auth.add_auth_headers(&mut headers);
 
         let (stream, _status, server_reasoning_included, models_etag, server_model) =
-            connect_websocket(ws_url, headers, turn_state.clone()).await?;
+            connect_websocket(ws_url, headers, turn_state.clone(), early_hangup_enabled).await?;
         Ok(ResponsesWebsocketConnection::new(
             stream,
             self.provider.stream_idle_timeout,
+            early_hangup_enabled,
             server_reasoning_included,
             models_etag,
             server_model,
@@ -416,7 +427,13 @@ impl ResponsesWebsocketClient {
         self.auth.add_auth_headers(&mut headers);
 
         let (mut stream, status, reasoning_included, models_etag, server_model) =
-            connect_websocket(ws_url.clone(), headers, /*turn_state*/ None).await?;
+            connect_websocket(
+                ws_url.clone(),
+                headers,
+                /*turn_state*/ None,
+                /*early_hangup_enabled*/ false,
+            )
+            .await?;
         let immediate_close = tokio::time::timeout(immediate_close_timeout, stream.next())
             .await
             .ok()
@@ -471,6 +488,7 @@ async fn connect_websocket(
     url: Url,
     headers: HeaderMap,
     turn_state: Option<Arc<OnceLock<String>>>,
+    early_hangup_enabled: bool,
 ) -> Result<(WsStream, StatusCode, bool, Option<String>, Option<String>), ApiError> {
     ensure_rustls_crypto_provider();
     info!("connecting to websocket: {url}");
@@ -530,7 +548,7 @@ async fn connect_websocket(
         let _ = turn_state.set(header_value.to_string());
     }
     Ok((
-        WsStream::new(stream),
+        WsStream::new(stream, early_hangup_enabled),
         response.status(),
         reasoning_included,
         models_etag,
@@ -1153,6 +1171,7 @@ async fn run_websocket_response_stream(
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
     connection_reused: bool,
     turn_state: Option<&OnceLock<String>>,
+    early_hangup_enabled: bool,
 ) -> Result<(), ApiError> {
     let mut last_server_model: Option<String> = None;
     let mut buffered_events: VecDeque<ResponseEventResult> = VecDeque::new();
@@ -1255,8 +1274,8 @@ async fn run_websocket_response_stream(
                 }
                 match process_responses_event(event) {
                     Ok(Some(event)) => {
-                        let should_finish_before_completed =
-                            should_finish_response_before_server_completed(&event);
+                        let should_finish_before_completed = early_hangup_enabled
+                            && should_finish_response_before_server_completed(&event);
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
                         enqueue_response_event(&tx_event, &mut buffered_events, Ok(event))?;
                         if should_finish_before_completed {
@@ -1419,6 +1438,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn websocket_context_compaction_output_item_done_is_forwarded() {
+        let raw_event = r#"{"type":"response.output_item.done","item":{"id":"cmp-1","type":"context_compaction","encrypted_content":"enc_1"},"output_index":0,"sequence_number":7}"#;
+        let event =
+            serde_json::from_str::<ResponsesStreamEvent>(raw_event).expect("parse websocket event");
+        let event = process_responses_event(event)
+            .expect("process websocket event")
+            .expect("event should be forwarded");
+
+        match &event {
+            ResponseEvent::OutputItemDone(ResponseItem::ContextCompaction {
+                id,
+                encrypted_content,
+                internal_chat_message_metadata_passthrough,
+            }) => {
+                assert_eq!(id.as_deref(), Some("cmp-1"));
+                assert_eq!(encrypted_content.as_deref(), Some("enc_1"));
+                assert!(internal_chat_message_metadata_passthrough.is_none());
+            }
+            other => panic!("expected context compaction item, got {other:?}"),
+        }
+        assert!(!should_finish_response_before_server_completed(&event));
+        assert!(!should_abort_websocket_on_raw_event(raw_event));
+    }
+
     #[tokio::test]
     async fn response_events_overflow_flushes_in_order() {
         let (tx_event, mut rx_event) = mpsc::channel::<ResponseEventResult>(1);
@@ -1512,6 +1556,9 @@ mod tests {
         ));
         assert!(!should_abort_websocket_on_raw_event(
             r#"{"type":"response.output_item.done","item":{"type":"tool_search_call","call_id":"call_1","execution":"server","arguments":{"query":"rust"}}}"#
+        ));
+        assert!(!should_abort_websocket_on_raw_event(
+            r#"{"type":"response.output_item.done","item":{"id":"cmp_1","type":"context_compaction","encrypted_content":"enc_1"}}"#
         ));
     }
 

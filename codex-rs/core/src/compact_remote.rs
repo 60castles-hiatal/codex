@@ -17,6 +17,7 @@ use crate::responses_metadata::CodexResponsesRequestKind;
 use crate::responses_metadata::CompactionTurnMetadata;
 use crate::session::session::Session;
 use crate::session::turn::built_tools;
+use crate::session::turn::supports_parallel_tool_calls_for_turn;
 use crate::session::turn_context::TurnContext;
 use codex_analytics::CompactionImplementation;
 use codex_analytics::CompactionPhase;
@@ -226,7 +227,7 @@ async fn run_remote_compact_task_inner_impl(
     let prompt = Prompt {
         input: prompt_input,
         tools: tool_router.model_visible_specs(),
-        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+        parallel_tool_calls: supports_parallel_tool_calls_for_turn(turn_context),
         base_instructions,
         output_schema: None,
         output_schema_strict: true,

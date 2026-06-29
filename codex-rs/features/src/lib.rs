@@ -237,6 +237,8 @@ pub enum Feature {
     RemoteCompactionV2,
     /// Enable Responses server-side context management compaction.
     ContextManagementCompaction,
+    /// Enable early Responses WebSocket hangup after terminal output items.
+    WebsocketHangup,
     /// Use Agent Identity for ChatGPT-authenticated sessions.
     UseAgentIdentity,
     /// Enable workspace dependency support.
@@ -1354,6 +1356,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ContextManagementCompaction,
         key: "context_management_compaction",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::WebsocketHangup,
+        key: "websocket_hangup",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },

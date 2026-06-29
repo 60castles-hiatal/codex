@@ -234,6 +234,7 @@ impl MemoryStartupContext {
             config.model_verbosity,
             config.features.enabled(Feature::EnableRequestCompression),
             config.features.enabled(Feature::RuntimeMetrics),
+            config.features.enabled(Feature::WebsocketHangup),
             /*beta_features_header*/ None,
             config.features.enabled(Feature::ItemIds),
             /*attestation_provider*/ None,

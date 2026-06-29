@@ -1974,6 +1974,49 @@ async fn status_snapshot_cached_limits_hide_credits_without_flag() {
 }
 
 #[tokio::test]
+async fn status_context_window_uses_model_override_without_token_info() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model_context_window = None;
+
+    let model_slug = "gpt-5.5";
+    config
+        .model_context_window_overrides
+        .insert(model_slug.to_string(), 340_000);
+
+    let now = chrono::Local
+        .with_ymd_and_hms(2024, 6, 1, 12, 0, 0)
+        .single()
+        .expect("timestamp");
+
+    let composite = new_status_output(
+        &config,
+        test_status_account_display().as_ref(),
+        /*token_info*/ None,
+        &TokenUsage::default(),
+        &None,
+        /*thread_name*/ None,
+        /*forked_from*/ None,
+        /*rate_limits*/ None,
+        None,
+        now,
+        model_slug,
+        /*collaboration_mode*/ None,
+        /*reasoning_effort_override*/ None,
+    );
+    let rendered_lines = render_lines(&composite.display_lines(/*width*/ 80));
+    let context_line = rendered_lines
+        .into_iter()
+        .find(|line| line.contains("Context window"))
+        .expect("context line");
+
+    assert!(
+        context_line.contains("100% left") && context_line.contains("0 used / 340K"),
+        "expected context line to use model override, got: {context_line}"
+    );
+}
+
+#[tokio::test]
 async fn status_context_window_uses_last_usage() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;

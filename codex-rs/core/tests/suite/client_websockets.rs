@@ -205,7 +205,7 @@ async fn responses_websocket_streams_request() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_streams_without_feature_flag_when_provider_supports_websockets() {
+async fn responses_websocket_streams_without_hangup_feature_when_provider_supports_websockets() {
     skip_if_no_network!();
 
     let server = start_websocket_server(vec![vec![vec![
@@ -223,6 +223,98 @@ async fn responses_websocket_streams_without_feature_flag_when_provider_supports
     assert_eq!(server.handshakes().len(), 1);
     assert_eq!(server.single_connection().len(), 1);
 
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn responses_websocket_waits_for_completed_without_hangup_feature() {
+    skip_if_no_network!();
+
+    let server = start_websocket_server(vec![vec![vec![
+        ev_response_created("resp-1"),
+        ev_assistant_message("msg-1", "assistant output"),
+    ]]])
+    .await;
+
+    let harness = websocket_harness(&server).await;
+    let mut client_session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
+    let responses_metadata = turn_metadata(&harness, /*turn_id*/ None);
+    let mut stream = client_session
+        .stream(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary,
+            /*service_tier*/ None,
+            &responses_metadata,
+            &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
+        )
+        .await
+        .expect("websocket stream failed");
+
+    let mut saw_error_before_completed = false;
+    while let Some(event) = stream.next().await {
+        match event {
+            Ok(ResponseEvent::Completed { .. }) => {
+                panic!("websocket_hangup=false should not complete before response.completed");
+            }
+            Ok(_) => {}
+            Err(_) => {
+                saw_error_before_completed = true;
+                break;
+            }
+        }
+    }
+
+    assert!(saw_error_before_completed);
+    assert_eq!(server.handshakes().len(), 1);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn websocket_hangup_finishes_before_completed_when_enabled() {
+    skip_if_no_network!();
+
+    let server = start_websocket_server(vec![vec![vec![
+        ev_response_created("resp-1"),
+        ev_assistant_message("msg-1", "assistant output"),
+    ]]])
+    .await;
+
+    let harness = websocket_harness_with_hangup(&server, /*runtime_metrics_enabled*/ false).await;
+    let mut client_session = harness.client.new_session();
+    let prompt = prompt_with_input(vec![message_item("hello")]);
+    let responses_metadata = turn_metadata(&harness, /*turn_id*/ None);
+    let mut stream = client_session
+        .stream(
+            &prompt,
+            &harness.model_info,
+            &harness.session_telemetry,
+            harness.effort.clone(),
+            harness.summary,
+            /*service_tier*/ None,
+            &responses_metadata,
+            &codex_rollout_trace::InferenceTraceContext::disabled(),
+            /*context_management*/ None,
+        )
+        .await
+        .expect("websocket stream failed");
+
+    let mut completed_response_id = None;
+    while let Some(event) = stream.next().await {
+        if let ResponseEvent::Completed { response_id, .. } =
+            event.expect("websocket stream should not error")
+        {
+            completed_response_id = Some(response_id);
+            break;
+        }
+    }
+
+    assert_eq!(completed_response_id.as_deref(), Some(""));
+    assert_eq!(server.handshakes().len(), 1);
     server.shutdown().await;
 }
 
@@ -2594,13 +2686,44 @@ async fn websocket_harness_with_options(
         .await
 }
 
+async fn websocket_harness_with_hangup(
+    server: &WebSocketTestServer,
+    runtime_metrics_enabled: bool,
+) -> WebsocketTestHarness {
+    websocket_harness_with_provider_options_and_hangup(
+        websocket_provider(server),
+        runtime_metrics_enabled,
+        /*websocket_hangup_enabled*/ true,
+    )
+    .await
+}
+
 async fn websocket_harness_with_provider_options(
     provider: ModelProviderInfo,
     runtime_metrics_enabled: bool,
 ) -> WebsocketTestHarness {
+    websocket_harness_with_provider_options_and_hangup(
+        provider,
+        runtime_metrics_enabled,
+        /*websocket_hangup_enabled*/ false,
+    )
+    .await
+}
+
+async fn websocket_harness_with_provider_options_and_hangup(
+    provider: ModelProviderInfo,
+    runtime_metrics_enabled: bool,
+    websocket_hangup_enabled: bool,
+) -> WebsocketTestHarness {
     let codex_home = TempDir::new().unwrap();
     let mut config = load_default_config_for_test(&codex_home).await;
     config.model = Some(MODEL.to_string());
+    if websocket_hangup_enabled {
+        config
+            .features
+            .enable(Feature::WebsocketHangup)
+            .expect("test config should allow feature update");
+    }
     if runtime_metrics_enabled {
         config
             .features
@@ -2642,6 +2765,7 @@ async fn websocket_harness_with_provider_options(
         config.model_verbosity,
         /*enable_request_compression*/ false,
         runtime_metrics_enabled,
+        /*websocket_hangup_enabled*/ config.features.enabled(Feature::WebsocketHangup),
         /*beta_features_header*/ None,
         /*item_ids_enabled*/ config.features.enabled(Feature::ItemIds),
         /*attestation_provider*/ None,

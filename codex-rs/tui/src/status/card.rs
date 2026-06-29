@@ -70,6 +70,15 @@ pub(crate) struct StatusTokenUsageData {
     context_window: Option<StatusContextWindowData>,
 }
 
+fn configured_context_window_for_model(config: &Config, model_name: &str) -> Option<i64> {
+    config.model_context_window.or_else(|| {
+        config
+            .model_context_window_overrides
+            .get(model_name)
+            .copied()
+    })
+}
+
 #[derive(Debug)]
 struct StatusRateLimitState {
     rate_limits: StatusRateLimitData,
@@ -299,6 +308,7 @@ impl StatusHistoryCell {
                     .unwrap_or_else(|| "auto".to_string()),
             ));
         }
+        let configured_context_window = configured_context_window_for_model(config, model_name);
         let (model_name, model_details) = compose_model_display(model_name, &config_entries);
         let approval = config_entries
             .iter()
@@ -325,8 +335,11 @@ impl StatusHistoryCell {
         let forked_from = forked_from.map(|id| id.to_string());
         let default_usage = TokenUsage::default();
         let (context_usage, context_window) = match token_info {
-            Some(info) => (&info.last_token_usage, info.model_context_window),
-            None => (&default_usage, config.model_context_window),
+            Some(info) => (
+                &info.last_token_usage,
+                info.model_context_window.or(configured_context_window),
+            ),
+            None => (&default_usage, configured_context_window),
         };
         let context_window = context_window.map(|window| StatusContextWindowData {
             percent_remaining: context_usage.percent_of_context_window_remaining(window),

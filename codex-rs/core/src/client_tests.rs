@@ -71,6 +71,7 @@ fn test_model_client(session_source: SessionSource) -> ModelClient {
         /*model_verbosity*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
+        /*websocket_hangup_enabled*/ false,
         /*beta_features_header*/ None,
         /*item_ids_enabled*/ false,
         /*attestation_provider*/ None,
@@ -499,6 +500,7 @@ fn model_client_with_counting_attestation(
         /*model_verbosity*/ None,
         /*enable_request_compression*/ false,
         /*include_timing_metrics*/ false,
+        /*websocket_hangup_enabled*/ false,
         /*beta_features_header*/ None,
         /*item_ids_enabled*/ false,
         Some(Arc::new(CountingAttestationProvider {
