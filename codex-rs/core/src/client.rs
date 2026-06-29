@@ -1475,7 +1475,7 @@ impl ModelClientSession {
                 }
                 Err(ApiError::Transport(
                     unauthorized_transport @ TransportError::Http { status, .. },
-                )) if status == StatusCode::UNAUTHORIZED => {
+                )) if is_rotation_auth_recoverable_status(status) => {
                     if refreshed_account_auth {
                         return Err(ApiError::Transport(unauthorized_transport));
                     }
@@ -2240,6 +2240,10 @@ impl AuthRequestTelemetryContext {
             recovery_phase: retry.recovery_phase,
         }
     }
+}
+
+fn is_rotation_auth_recoverable_status(status: StatusCode) -> bool {
+    matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
 }
 
 struct WebsocketConnectParams<'a> {

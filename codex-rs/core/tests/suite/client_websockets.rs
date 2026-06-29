@@ -53,6 +53,7 @@ use futures::SinkExt;
 use futures::StreamExt;
 use http::HeaderName;
 use http::HeaderValue;
+use http::StatusCode;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -1956,6 +1957,24 @@ async fn responses_websocket_auth_rotation_reconnects_to_coordinator_account() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
 async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401() {
+    responses_websocket_auth_rotation_fetches_same_account_auth_after_handshake_status(
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_403() {
+    responses_websocket_auth_rotation_fetches_same_account_auth_after_handshake_status(
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+}
+
+async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_handshake_status(
+    initial_status: StatusCode,
+) {
     skip_if_no_network!();
 
     let rotation_homes = TempDir::new().expect("create rotation homes");
@@ -1993,10 +2012,13 @@ async fn responses_websocket_auth_rotation_fetches_same_account_auth_after_401()
     let _refresh_env_guard =
         EnvVarGuard::set(REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR, OsStr::new(&refresh_url));
 
-    let server = UnauthorizedThenWebSocketTestServer::start(vec![
-        ev_response_created("resp-after-auth-refresh"),
-        ev_completed("resp-after-auth-refresh"),
-    ])
+    let server = UnauthorizedThenWebSocketTestServer::start_with_initial_status(
+        initial_status,
+        vec![
+            ev_response_created("resp-after-auth-refresh"),
+            ev_completed("resp-after-auth-refresh"),
+        ],
+    )
     .await;
     let harness = websocket_harness_with_provider_options(
         websocket_provider_from_uri(server.uri(), /*websocket_connect_timeout_ms*/ None),
@@ -3105,7 +3127,10 @@ struct UnauthorizedThenWebSocketTestServer {
 }
 
 impl UnauthorizedThenWebSocketTestServer {
-    async fn start(response_events: Vec<Value>) -> Self {
+    async fn start_with_initial_status(
+        initial_status: StatusCode,
+        response_events: Vec<Value>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind unauthorised websocket server");
@@ -3126,11 +3151,12 @@ impl UnauthorizedThenWebSocketTestServer {
                 };
                 let mut ignored_request = [0_u8; 4096];
                 let _ = rejected_stream.read(&mut ignored_request).await;
-                let _ = rejected_stream
-                    .write_all(
-                        b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
-                    )
-                    .await;
+                let status_line = format!(
+                    "HTTP/1.1 {} {}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    initial_status.as_u16(),
+                    initial_status.canonical_reason().unwrap_or("Error"),
+                );
+                let _ = rejected_stream.write_all(status_line.as_bytes()).await;
                 let _ = rejected_stream.shutdown().await;
 
                 let accept_result = tokio::select! {
