@@ -1753,9 +1753,18 @@ impl ModelClientSession {
                     }
                     Err(err) => return Err(map_api_error(err)),
                 }
+                let mut send_full_request = false;
                 if let Some(previous_account_index) =
                     prepared_request.previous_response_account_index
                 {
+                    if !self.websocket_session.connection_reused() {
+                        trace!(
+                            previous_account_index = previous_account_index,
+                            previous_generation = ?prepared_request.previous_response_generation,
+                            "Codex auth rotation sending full websocket request after reconnect"
+                        );
+                        send_full_request = true;
+                    }
                     let selected_account_index = self
                         .websocket_session
                         .connection
@@ -1776,8 +1785,11 @@ impl ModelClientSession {
                             selected_generation = ?selected_generation,
                             "Codex auth rotation sending full websocket request after account swap or generation change"
                         );
-                        ws_request = full_ws_request;
+                        send_full_request = true;
                     }
+                }
+                if send_full_request {
+                    ws_request = full_ws_request;
                 }
             }
             let inference_trace_attempt = inference_trace.start_attempt();

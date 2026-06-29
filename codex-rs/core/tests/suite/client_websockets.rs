@@ -1895,6 +1895,22 @@ async fn responses_websocket_auth_rotation_reconnects_to_coordinator_account() {
         handshakes[1].header("authorization").as_deref(),
         Some("Bearer sk-a")
     );
+    let connections = server.connections();
+    assert_eq!(connections.len(), 2);
+    assert_eq!(connections[1].len(), 1);
+    let same_account_reconnect_request = &connections[1][0];
+    assert_eq!(
+        same_account_reconnect_request["type"].as_str(),
+        Some("response.create")
+    );
+    assert_eq!(
+        same_account_reconnect_request.get("previous_response_id"),
+        None
+    );
+    assert_eq!(
+        same_account_reconnect_request["input"],
+        expected_wire_input(&prompt_two.input)
+    );
     {
         let mut state = rotation_state.lock().expect("rotation state lock poisoned");
         state.active_index = 1;
