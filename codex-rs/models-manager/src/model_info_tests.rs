@@ -62,6 +62,39 @@ fn model_context_window_override_clamps_to_max_context_window() {
 }
 
 #[test]
+fn model_context_window_override_map_raises_context_window_for_matching_slug() {
+    let mut model = model_info_from_slug("gpt-5.5");
+    model.context_window = Some(273_000);
+    model.max_context_window = Some(273_000);
+    let config = ModelsManagerConfig {
+        model_context_window_overrides: [("gpt-5.5".to_string(), 320_000)].into(),
+        ..Default::default()
+    };
+
+    let updated = with_config_overrides(model.clone(), &config);
+    let mut expected = model;
+    expected.context_window = Some(320_000);
+    expected.max_context_window = Some(320_000);
+
+    assert_eq!(updated, expected);
+}
+
+#[test]
+fn model_context_window_override_map_ignores_other_slugs() {
+    let mut model = model_info_from_slug("gpt-5.5");
+    model.context_window = Some(273_000);
+    model.max_context_window = Some(273_000);
+    let config = ModelsManagerConfig {
+        model_context_window_overrides: [("other-model".to_string(), 320_000)].into(),
+        ..Default::default()
+    };
+
+    let updated = with_config_overrides(model.clone(), &config);
+
+    assert_eq!(updated, model);
+}
+
+#[test]
 fn model_context_window_uses_model_value_without_override() {
     let mut model = model_info_from_slug("unknown-model");
     model.context_window = Some(273_000);
