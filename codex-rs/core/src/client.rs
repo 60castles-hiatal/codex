@@ -35,6 +35,7 @@ use codex_api::AuthProvider;
 use codex_api::CompactClient as ApiCompactClient;
 use codex_api::CompactionInput as ApiCompactionInput;
 use codex_api::Compression;
+use codex_api::ContextManagement;
 use codex_api::MemoriesClient as ApiMemoriesClient;
 use codex_api::MemorySummarizeInput as ApiMemorySummarizeInput;
 use codex_api::MemorySummarizeOutput as ApiMemorySummarizeOutput;
@@ -255,6 +256,7 @@ pub struct ModelClientSession {
     /// keep sending it unchanged between turn requests (e.g., for retries, incremental
     /// appends, or continuation requests), and must not send it between different turns.
     turn_state: Arc<OnceLock<String>>,
+    context_management_compaction_disabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -293,6 +295,7 @@ fn responses_request_properties_match(
         service_tier: previous_service_tier,
         prompt_cache_key: previous_prompt_cache_key,
         text: previous_text,
+        context_management: previous_context_management,
         client_metadata: _,
     } = previous;
     let ResponsesApiRequest {
@@ -309,6 +312,7 @@ fn responses_request_properties_match(
         service_tier: current_service_tier,
         prompt_cache_key: current_prompt_cache_key,
         text: current_text,
+        context_management: current_context_management,
         client_metadata: _,
     } = current;
 
@@ -324,6 +328,7 @@ fn responses_request_properties_match(
         && previous_service_tier == current_service_tier
         && previous_prompt_cache_key == current_prompt_cache_key
         && previous_text == current_text
+        && previous_context_management == current_context_management
 }
 
 impl WebsocketSession {
@@ -438,6 +443,7 @@ impl ModelClient {
             client: self.clone(),
             websocket_session: self.take_cached_websocket_session(),
             turn_state: Arc::new(OnceLock::new()),
+            context_management_compaction_disabled: false,
         }
     }
 
@@ -524,6 +530,7 @@ impl ModelClient {
             settings.summary,
             settings.service_tier,
             responses_metadata,
+            /*context_management*/ None,
         )?;
         let ResponsesApiRequest {
             model,
@@ -787,6 +794,7 @@ impl ModelClient {
         summary: ReasoningSummaryConfig,
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
+        context_management: Option<Vec<ContextManagement>>,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let mut input = prompt.get_formatted_input_for_request(model_info.use_responses_lite);
@@ -834,6 +842,7 @@ impl ModelClient {
             service_tier,
             prompt_cache_key,
             text,
+            context_management,
             client_metadata: Some(responses_metadata.client_metadata()),
         };
         Ok(request)
@@ -1009,6 +1018,19 @@ impl Drop for ModelClientSession {
 impl ModelClientSession {
     pub(crate) fn turn_state(&self) -> Arc<OnceLock<String>> {
         Arc::clone(&self.turn_state)
+    }
+
+    pub(crate) fn context_management_compaction_disabled(&self) -> bool {
+        self.context_management_compaction_disabled
+    }
+
+    pub(crate) fn disable_context_management_compaction(&mut self) -> bool {
+        if self.context_management_compaction_disabled {
+            return false;
+        }
+        self.context_management_compaction_disabled = true;
+        self.reset_websocket_session();
+        true
     }
 
     fn reset_websocket_session(&mut self) {
@@ -1290,6 +1312,7 @@ impl ModelClientSession {
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
+        context_management: Option<Vec<ContextManagement>>,
     ) -> Result<ResponseStream> {
         let auth_manager = self.client.state.provider.auth_manager();
         let mut auth_recovery = auth_manager
@@ -1328,6 +1351,7 @@ impl ModelClientSession {
                 summary,
                 service_tier.clone(),
                 responses_metadata,
+                context_management.clone(),
             )?;
             let store = request.store;
             self.client
@@ -1416,6 +1440,7 @@ impl ModelClientSession {
         warmup: bool,
         request_trace: Option<W3cTraceContext>,
         inference_trace: &InferenceTraceContext,
+        context_management: Option<Vec<ContextManagement>>,
     ) -> Result<WebsocketStreamOutcome> {
         let auth_manager = self.client.state.provider.auth_manager();
 
@@ -1438,6 +1463,7 @@ impl ModelClientSession {
                 summary,
                 service_tier.clone(),
                 responses_metadata,
+                context_management.clone(),
             )?;
             let mut client_metadata = self
                 .client
@@ -1622,6 +1648,7 @@ impl ModelClientSession {
                 /*warmup*/ true,
                 current_span_w3c_trace_context(),
                 &disabled_trace,
+                /*context_management*/ None,
             )
             .await
         {
@@ -1664,6 +1691,33 @@ impl ModelClientSession {
         responses_metadata: &CodexResponsesMetadata,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
+        self.stream_with_context_management(
+            prompt,
+            model_info,
+            session_telemetry,
+            effort,
+            summary,
+            service_tier,
+            responses_metadata,
+            inference_trace,
+            /*context_management*/ None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn stream_with_context_management(
+        &mut self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        effort: Option<ReasoningEffortConfig>,
+        summary: ReasoningSummaryConfig,
+        service_tier: Option<String>,
+        responses_metadata: &CodexResponsesMetadata,
+        inference_trace: &InferenceTraceContext,
+        context_management: Option<Vec<ContextManagement>>,
+    ) -> Result<ResponseStream> {
         let wire_api = self.client.state.provider.info().wire_api;
         match wire_api {
             WireApi::Responses => {
@@ -1681,6 +1735,7 @@ impl ModelClientSession {
                             /*warmup*/ false,
                             request_trace,
                             inference_trace,
+                            context_management.clone(),
                         )
                         .await?
                     {
@@ -1700,6 +1755,7 @@ impl ModelClientSession {
                     service_tier,
                     responses_metadata,
                     inference_trace,
+                    context_management,
                 )
                 .await
             }

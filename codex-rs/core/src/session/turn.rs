@@ -73,6 +73,7 @@ use codex_analytics::CompactionReason;
 use codex_analytics::InvocationType;
 use codex_analytics::TurnResolvedConfigFact;
 use codex_analytics::build_track_events_context;
+use codex_api::ContextManagement;
 use codex_async_utils::OrCancelExt;
 use codex_core_plugins::RecommendedPluginCandidatesInput;
 use codex_core_skills::injection::InjectedHostSkillPrompts;
@@ -96,6 +97,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentMessageContentDeltaEvent;
 use codex_protocol::protocol::AgentReasoningSectionBreakEvent;
 use codex_protocol::protocol::CodexErrorInfo;
+use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::PlanDeltaEvent;
@@ -294,8 +296,12 @@ pub(crate) async fn run_turn(
                 let (has_pending_input, token_status, estimated_token_count) = async {
                     let has_pending_input =
                         sess.input_queue.has_pending_input(&sess.active_turn).await;
-                    let token_status =
-                        auto_compact_token_status(sess.as_ref(), turn_context.as_ref()).await;
+                    let token_status = auto_compact_token_status(
+                        sess.as_ref(),
+                        turn_context.as_ref(),
+                        client_session.context_management_compaction_disabled(),
+                    )
+                    .await;
                     let estimated_token_count =
                         sess.get_estimated_token_count(turn_context.as_ref()).await;
                     (has_pending_input, token_status, estimated_token_count)
@@ -815,20 +821,137 @@ struct AutoCompactTokenStatus {
     token_limit_reached: bool,
 }
 
+fn context_management_hard_context_window(turn_context: &TurnContext) -> Option<i64> {
+    turn_context
+        .model_info
+        .max_context_window
+        .or_else(|| turn_context.model_info.resolved_context_window())
+}
+
+fn context_management_compact_threshold(turn_context: &TurnContext) -> Option<i64> {
+    context_management_hard_context_window(turn_context)
+        .map(|context_window| context_window.saturating_mul(9) / 10)
+        .filter(|threshold| *threshold > 0)
+}
+
+fn context_management_compaction_enabled(
+    turn_context: &TurnContext,
+    context_management_compaction_disabled: bool,
+) -> bool {
+    !context_management_compaction_disabled
+        && turn_context
+            .config
+            .features
+            .enabled(Feature::AutoCompaction)
+        && turn_context
+            .config
+            .features
+            .enabled(Feature::ContextManagementCompaction)
+        && should_use_remote_compact_task(turn_context.provider.info())
+        && context_management_compact_threshold(turn_context).is_some()
+}
+
+fn context_management_for_sampling(
+    turn_context: &TurnContext,
+    client_session: &ModelClientSession,
+) -> Option<Vec<ContextManagement>> {
+    if !context_management_compaction_enabled(
+        turn_context,
+        client_session.context_management_compaction_disabled(),
+    ) {
+        return None;
+    }
+
+    Some(vec![ContextManagement::Compaction {
+        compact_threshold: context_management_compact_threshold(turn_context)?,
+    }])
+}
+
+fn is_context_management_compaction_invalid_request(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("context_management") || message.contains("compact_threshold")
+}
+
+fn context_management_client_compact_token_limit(
+    turn_context: &TurnContext,
+    use_context_management_limit: bool,
+) -> i64 {
+    if use_context_management_limit {
+        if let Some(limit) = turn_context.config.model_auto_compact_token_limit {
+            return limit;
+        }
+
+        if let Some(limit) = context_management_compact_threshold(turn_context) {
+            return limit;
+        }
+    }
+
+    turn_context
+        .model_info
+        .auto_compact_token_limit()
+        .unwrap_or(i64::MAX)
+}
+
+fn context_management_full_context_window_limit(
+    turn_context: &TurnContext,
+    use_context_management_limit: bool,
+) -> Option<i64> {
+    if use_context_management_limit {
+        return context_management_hard_context_window(turn_context);
+    }
+
+    turn_context.model_context_window()
+}
+
+fn is_server_context_compaction_item(item: &ResponseItem) -> bool {
+    matches!(
+        item,
+        ResponseItem::Compaction { .. } | ResponseItem::ContextCompaction { .. }
+    )
+}
+
+async fn install_server_context_compaction_checkpoint(
+    sess: &Session,
+    turn_context: &TurnContext,
+    item: ResponseItem,
+) {
+    let replacement_history = vec![item];
+    let (window_number, window_ids) = sess.advance_auto_compact_window().await;
+    let compacted_item = CompactedItem {
+        message: String::new(),
+        replacement_history: Some(replacement_history.clone()),
+        window_number: Some(window_number),
+        first_window_id: Some(window_ids.first_window_id.to_string()),
+        previous_window_id: window_ids.previous_window_id.map(|id| id.to_string()),
+        window_id: Some(window_ids.window_id.to_string()),
+    };
+    sess.replace_compacted_history(
+        turn_context,
+        replacement_history,
+        /*reference_context_item*/ None,
+        compacted_item,
+    )
+    .await;
+    sess.recompute_token_usage(turn_context).await;
+}
+
 async fn auto_compact_token_status(
     sess: &Session,
     turn_context: &TurnContext,
+    context_management_compaction_disabled: bool,
 ) -> AutoCompactTokenStatus {
     let active_context_tokens = sess.get_total_token_usage().await;
     let mut auto_compact_window_prefill_tokens = None;
+    let use_context_management_limit =
+        context_management_compaction_enabled(turn_context, context_management_compaction_disabled);
     let (auto_compact_scope_tokens, auto_compact_scope_limit, full_context_window_limit) =
         match turn_context.config.model_auto_compact_token_limit_scope {
             AutoCompactTokenLimitScope::Total => (
                 active_context_tokens,
-                turn_context
-                    .model_info
-                    .auto_compact_token_limit()
-                    .unwrap_or(i64::MAX),
+                context_management_client_compact_token_limit(
+                    turn_context,
+                    use_context_management_limit,
+                ),
                 None,
             ),
             AutoCompactTokenLimitScope::BodyAfterPrefix => {
@@ -840,9 +963,16 @@ async fn auto_compact_token_status(
                     turn_context
                         .config
                         .model_auto_compact_token_limit
-                        .or_else(|| turn_context.model_info.auto_compact_token_limit())
-                        .unwrap_or(i64::MAX),
-                    turn_context.model_context_window(),
+                        .unwrap_or_else(|| {
+                            context_management_client_compact_token_limit(
+                                turn_context,
+                                use_context_management_limit,
+                            )
+                        }),
+                    context_management_full_context_window_limit(
+                        turn_context,
+                        use_context_management_limit,
+                    ),
                 )
             }
         };
@@ -879,7 +1009,12 @@ async fn run_pre_sampling_compact(
     }
 
     maybe_run_previous_model_inline_compact(sess, turn_context, client_session).await?;
-    let token_status = auto_compact_token_status(sess.as_ref(), turn_context.as_ref()).await;
+    let token_status = auto_compact_token_status(
+        sess.as_ref(),
+        turn_context.as_ref(),
+        client_session.context_management_compaction_disabled(),
+    )
+    .await;
     // Compact if the configured auto-compaction budget or usable context window is exhausted.
     if token_status.token_limit_reached {
         run_auto_compact(
@@ -1179,6 +1314,8 @@ async fn run_sampling_request(
             turn_context.as_ref(),
             base_instructions.clone(),
         );
+        let context_management =
+            context_management_for_sampling(turn_context.as_ref(), client_session);
         let err = match try_run_sampling_request(
             tool_runtime.clone(),
             Arc::clone(&sess),
@@ -1189,6 +1326,7 @@ async fn run_sampling_request(
             Arc::clone(&turn_diff_tracker),
             &prompt,
             cancellation_token.child_token(),
+            context_management.clone(),
         )
         .await
         {
@@ -1211,6 +1349,15 @@ async fn run_sampling_request(
 
         if original_input.is_none() {
             original_input = Some(prompt.input);
+        }
+
+        if context_management.is_some()
+            && let CodexErr::InvalidRequest(message) = &err
+            && is_context_management_compaction_invalid_request(message)
+            && client_session.disable_context_management_compaction()
+        {
+            warn!("server rejected Responses context_management compaction; retrying without it");
+            continue;
         }
 
         if !err.is_retryable() {
@@ -2014,6 +2161,7 @@ async fn try_run_sampling_request(
     turn_diff_tracker: SharedTurnDiffTracker,
     prompt: &Prompt,
     cancellation_token: CancellationToken,
+    context_management: Option<Vec<ContextManagement>>,
 ) -> CodexResult<SamplingRequestResult> {
     feedback_tags!(
         model = turn_context.model_info.slug.clone(),
@@ -2030,7 +2178,7 @@ async fn try_run_sampling_request(
     );
     let sampling_timing_guard = turn_context.turn_timing_state.begin_sampling();
     let mut stream = client_session
-        .stream(
+        .stream_with_context_management(
             prompt,
             &turn_context.model_info,
             &turn_context.session_telemetry,
@@ -2039,6 +2187,7 @@ async fn try_run_sampling_request(
             turn_context.config.service_tier.clone(),
             responses_metadata,
             &inference_trace,
+            context_management,
         )
         .instrument(trace_span!("stream_request"))
         .or_cancel(&cancellation_token)
@@ -2206,6 +2355,8 @@ async fn try_run_sampling_request(
                     | ResponseItem::Other => false,
                 };
 
+                let server_context_compaction_item =
+                    is_server_context_compaction_item(&item).then(|| item.clone());
                 let output_result =
                     match handle_output_item_done(&mut ctx, item, previously_streamed_item)
                         .instrument(handle_responses)
@@ -2214,6 +2365,14 @@ async fn try_run_sampling_request(
                         Ok(output_result) => output_result,
                         Err(err) => break Err(err),
                     };
+                if let Some(item) = server_context_compaction_item {
+                    install_server_context_compaction_checkpoint(
+                        sess.as_ref(),
+                        turn_context.as_ref(),
+                        item,
+                    )
+                    .await;
+                }
                 if let Some(tool_future) = output_result.tool_future {
                     in_flight.push_back(tool_future);
                 }

@@ -887,6 +887,7 @@ fn serialize_websocket_request(request: &ResponsesWsRequest) -> Result<String, A
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::ContextManagement;
     use crate::common::ResponseCreateWsRequest;
     use codex_protocol::models::ContentItem;
     use codex_protocol::models::ResponseItem;
@@ -923,6 +924,7 @@ mod tests {
             service_tier: Some("priority".to_string()),
             prompt_cache_key: Some("cache-key".to_string()),
             text: None,
+            context_management: None,
             generate: Some(false),
             client_metadata: Some(HashMap::from([(
                 "traceparent".to_string(),
@@ -937,6 +939,37 @@ mod tests {
             serde_json::from_str::<Value>(&request_text).expect("parse websocket request");
 
         assert_eq!(wire_payload, previous_payload);
+    }
+
+    #[test]
+    fn direct_serialization_includes_context_management() {
+        let request = ResponsesWsRequest::ResponseCreate(ResponseCreateWsRequest {
+            model: "gpt-test".to_string(),
+            instructions: String::new(),
+            previous_response_id: None,
+            input: Vec::new(),
+            tools: Vec::new(),
+            tool_choice: "auto".to_string(),
+            parallel_tool_calls: false,
+            reasoning: None,
+            store: false,
+            stream: true,
+            include: Vec::new(),
+            service_tier: None,
+            prompt_cache_key: None,
+            text: None,
+            context_management: Some(vec![ContextManagement::Compaction {
+                compact_threshold: 360_000,
+            }]),
+            generate: None,
+            client_metadata: None,
+        });
+
+        let payload = serde_json::to_value(&request).expect("serialize websocket payload");
+        assert_eq!(
+            payload.get("context_management"),
+            Some(&json!([{"type": "compaction", "compact_threshold": 360000}]))
+        );
     }
 
     #[test]
