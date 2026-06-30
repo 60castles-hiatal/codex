@@ -822,6 +822,15 @@ struct AutoCompactTokenStatus {
 }
 
 fn context_management_hard_context_window(turn_context: &TurnContext) -> Option<i64> {
+    if turn_context.config.model_context_window.is_some()
+        || turn_context
+            .config
+            .model_context_window_overrides
+            .contains_key(&turn_context.model_info.slug)
+    {
+        return turn_context.model_info.resolved_context_window();
+    }
+
     turn_context
         .model_info
         .max_context_window

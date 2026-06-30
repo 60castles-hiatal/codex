@@ -8240,6 +8240,53 @@ async fn model_catalog_json_rejects_empty_catalog() -> std::io::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn model_context_window_overrides_load_from_config() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        model_context_window_overrides: BTreeMap::from([("gpt-5.5".to_string(), 320_000)]),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.model_context_window_overrides,
+        BTreeMap::from([("gpt-5.5".to_string(), 320_000)])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn model_context_window_overrides_reject_non_positive_values() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cfg = ConfigToml {
+        model_context_window_overrides: BTreeMap::from([("gpt-5.5".to_string(), 0)]),
+        ..Default::default()
+    };
+
+    let err = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("non-positive model context window override should fail config load");
+
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    assert!(
+        err.to_string()
+            .contains("model_context_window_overrides.gpt-5.5 must be positive"),
+        "unexpected error: {err}"
+    );
+    Ok(())
+}
+
 fn create_test_fixture() -> std::io::Result<PrecedenceTestFixture> {
     let toml = r#"
 model = "o3"
