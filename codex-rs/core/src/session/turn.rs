@@ -1101,10 +1101,22 @@ pub(crate) fn build_prompt(
     turn_context: &TurnContext,
     base_instructions: BaseInstructions,
 ) -> Prompt {
+    let early_hangup_enabled = turn_context.config.features.enabled(Feature::EarlyHangup);
+    let mut tools = router.model_visible_specs();
+    if early_hangup_enabled {
+        tools.push(crate::early_hangup::final_answer_tool());
+    }
     Prompt {
         input,
-        tools: router.model_visible_specs(),
+        tools,
         parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+        tool_choice: if early_hangup_enabled {
+            "required".to_string()
+        } else {
+            "auto".to_string()
+        },
+        early_final_answer_tool_name: early_hangup_enabled
+            .then(|| crate::early_hangup::FINAL_ANSWER_TOOL_NAME.to_string()),
         base_instructions,
         output_schema: turn_context.final_output_json_schema.clone(),
         output_schema_strict: !crate::guardian::is_guardian_reviewer_source(
@@ -1900,6 +1912,63 @@ async fn handle_assistant_item_done_in_plan_mode(
     false
 }
 
+async fn complete_early_hangup_final_answer(
+    sess: &Session,
+    turn_context: &TurnContext,
+    turn_store: &codex_extension_api::ExtensionData,
+    answer: String,
+    plan_mode_state: Option<&mut PlanModeStreamState>,
+) -> Option<String> {
+    let item = ResponseItem::Message {
+        id: Some(format!("msg_{}", uuid::Uuid::new_v4())),
+        role: "assistant".to_string(),
+        content: vec![ContentItem::OutputText { text: answer }],
+        phase: None,
+        internal_chat_message_metadata_passthrough: None,
+    };
+
+    if let Some(state) = plan_mode_state {
+        let mut last_agent_message = None;
+        handle_assistant_item_done_in_plan_mode(
+            sess,
+            turn_context,
+            turn_store,
+            &item,
+            state,
+            /*previously_active_item*/ None,
+            &mut last_agent_message,
+        )
+        .await;
+        return last_agent_message;
+    }
+
+    let finalized_turn_item = finalize_non_tool_response_item(
+        sess,
+        turn_context,
+        TurnItemContributorPolicy::Run(turn_store),
+        &item,
+        /*plan_mode*/ false,
+    )
+    .await;
+    let finalized_facts = finalized_turn_item
+        .as_ref()
+        .map(|finalized| finalized.facts.clone());
+    if let Some(finalized_turn_item) = finalized_turn_item {
+        sess.emit_turn_item_started(turn_context, &finalized_turn_item.turn_item)
+            .await;
+        sess.emit_turn_item_completed(turn_context, finalized_turn_item.turn_item)
+            .await;
+    }
+    record_completed_response_item_with_finalized_facts(
+        sess,
+        turn_context,
+        &item,
+        finalized_facts.as_ref(),
+    )
+    .await;
+    finalized_facts.and_then(|facts| facts.last_agent_message)
+}
+
 #[instrument(level = "trace", skip_all)]
 async fn drain_in_flight(
     in_flight: &mut FuturesOrdered<BoxFuture<'static, CodexResult<ResponseInputItem>>>,
@@ -1989,6 +2058,11 @@ async fn try_run_sampling_request(
     let plan_mode = turn_context.collaboration_mode.mode == ModeKind::Plan;
     let mut assistant_message_stream_parsers = AssistantMessageStreamParsers::new(plan_mode);
     let mut plan_mode_state = plan_mode.then(|| PlanModeStreamState::new(&turn_context.sub_id));
+    let mut early_hangup_state = turn_context
+        .config
+        .features
+        .enabled(Feature::EarlyHangup)
+        .then(crate::early_hangup::EarlyHangupState::default);
     let defer_streamed_turn_items_for_contributors =
         !sess.services.extensions.turn_item_contributors().is_empty();
     let mut active_item_is_streaming_to_client = false;
@@ -2076,6 +2150,32 @@ async fn try_run_sampling_request(
                 {
                     continue;
                 }
+                if let Some(state) = early_hangup_state.as_mut() {
+                    state.observe_output_item(&item);
+                }
+                if let Some(state) = early_hangup_state.as_ref() {
+                    if let Some(answer) = state.final_answer_from_done_item(&item) {
+                        drop(stream);
+                        let fallback_last_agent_message = answer.clone();
+                        let completed_last_agent_message = complete_early_hangup_final_answer(
+                            &sess,
+                            &turn_context,
+                            turn_store.as_ref(),
+                            answer,
+                            plan_mode_state.as_mut(),
+                        )
+                        .await;
+                        last_agent_message =
+                            completed_last_agent_message.or(Some(fallback_last_agent_message));
+                        break Ok(SamplingRequestResult {
+                            needs_follow_up: false,
+                            last_agent_message,
+                        });
+                    }
+                    if crate::early_hangup::is_final_answer_call(&item) {
+                        continue;
+                    }
+                }
 
                 let mut ctx = HandleOutputCtx {
                     sess: sess.clone(),
@@ -2130,6 +2230,9 @@ async fn try_run_sampling_request(
                 }
             }
             ResponseEvent::OutputItemAdded(item) => {
+                if let Some(state) = early_hangup_state.as_mut() {
+                    state.observe_output_item(&item);
+                }
                 if let ResponseItem::CustomToolCall { call_id, name, .. } = &item {
                     let tool_name = ToolName::plain(name.as_str());
                     active_tool_argument_diff_consumer = tool_runtime
@@ -2281,6 +2384,24 @@ async fn try_run_sampling_request(
                     last_agent_message,
                 });
             }
+            ResponseEvent::EarlyFinalAnswer(answer) => {
+                drop(stream);
+                let fallback_last_agent_message = answer.clone();
+                let completed_last_agent_message = complete_early_hangup_final_answer(
+                    &sess,
+                    &turn_context,
+                    turn_store.as_ref(),
+                    answer,
+                    plan_mode_state.as_mut(),
+                )
+                .await;
+                last_agent_message =
+                    completed_last_agent_message.or(Some(fallback_last_agent_message));
+                break Ok(SamplingRequestResult {
+                    needs_follow_up: false,
+                    last_agent_message,
+                });
+            }
             ResponseEvent::OutputTextDelta(delta) => {
                 // In review child threads, suppress assistant text deltas; the
                 // UI will show a selection popup from the final ReviewOutput.
@@ -2314,10 +2435,31 @@ async fn try_run_sampling_request(
                 }
             }
             ResponseEvent::ToolCallInputDelta {
-                item_id: _,
+                item_id,
                 call_id,
                 delta,
             } => {
+                if let Some(answer) = early_hangup_state
+                    .as_mut()
+                    .and_then(|state| state.observe_function_call_arguments_delta(&item_id, &delta))
+                {
+                    drop(stream);
+                    let fallback_last_agent_message = answer.clone();
+                    let completed_last_agent_message = complete_early_hangup_final_answer(
+                        &sess,
+                        &turn_context,
+                        turn_store.as_ref(),
+                        answer,
+                        plan_mode_state.as_mut(),
+                    )
+                    .await;
+                    last_agent_message =
+                        completed_last_agent_message.or(Some(fallback_last_agent_message));
+                    break Ok(SamplingRequestResult {
+                        needs_follow_up: false,
+                        last_agent_message,
+                    });
+                }
                 let Some((active_call_id, consumer)) = active_tool_argument_diff_consumer.as_mut()
                 else {
                     continue;

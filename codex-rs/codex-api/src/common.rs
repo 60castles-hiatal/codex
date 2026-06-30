@@ -99,6 +99,9 @@ pub enum ResponseEvent {
         call_id: Option<String>,
         delta: String,
     },
+    /// Emitted when the stream was intentionally closed after a configured
+    /// final-answer tool call yielded parseable arguments.
+    EarlyFinalAnswer(String),
     ReasoningSummaryDelta {
         delta: String,
         summary_index: i64,

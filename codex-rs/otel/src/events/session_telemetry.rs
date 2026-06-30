@@ -1163,6 +1163,7 @@ impl SessionTelemetry {
                 SessionTelemetry::responses_item_type(item)
             }
             ResponseEvent::Completed { .. } => "completed".into(),
+            ResponseEvent::EarlyFinalAnswer(_) => "early_final_answer".into(),
             ResponseEvent::OutputTextDelta(_) => "text_delta".into(),
             ResponseEvent::ToolCallInputDelta { .. } => "tool_input_delta".into(),
             ResponseEvent::ReasoningSummaryDelta { .. } => "reasoning_summary_delta".into(),

@@ -50,6 +50,7 @@ mod compact_remote_parity;
 mod compact_resume_fork;
 mod current_time_reminder;
 mod deprecation_notice;
+mod early_hangup;
 mod exec;
 mod exec_policy;
 #[cfg(not(target_os = "windows"))]

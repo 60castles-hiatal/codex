@@ -243,6 +243,9 @@ pub enum Feature {
     UseAgentIdentity,
     /// Enable workspace dependency support.
     WorkspaceDependencies,
+    /// Finish turns through an internal final-answer tool and hang up early once
+    /// the final answer arguments are recoverable.
+    EarlyHangup,
 
     // Removed
     /// Removed compatibility flag retained as a no-op so old configs can
@@ -1370,6 +1373,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "workspace_dependencies",
         stage: Stage::Stable,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::EarlyHangup,
+        key: "early_hangup",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
     },
 ];
 

@@ -26,6 +26,12 @@ pub struct Prompt {
     /// Whether parallel tool calls are permitted for this prompt.
     pub(crate) parallel_tool_calls: bool,
 
+    /// Responses API tool-choice mode for this prompt.
+    pub(crate) tool_choice: String,
+
+    /// Final-answer tool name that should terminate the stream early when seen.
+    pub(crate) early_final_answer_tool_name: Option<String>,
+
     pub base_instructions: BaseInstructions,
 
     /// Optional the output schema for the model's response.
@@ -41,6 +47,8 @@ impl Default for Prompt {
             input: Vec::new(),
             tools: Vec::new(),
             parallel_tool_calls: false,
+            tool_choice: "auto".to_string(),
+            early_final_answer_tool_name: None,
             base_instructions: BaseInstructions::default(),
             output_schema: None,
             output_schema_strict: true,

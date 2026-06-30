@@ -825,7 +825,7 @@ impl ModelClient {
             instructions: instructions.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
+            tool_choice: prompt.tool_choice.clone(),
             parallel_tool_calls: prompt.parallel_tool_calls && !model_info.use_responses_lite,
             reasoning,
             store: provider.is_azure_responses_endpoint(),
@@ -1052,6 +1052,7 @@ impl ModelClientSession {
             },
             compression,
             turn_state: Some(Arc::clone(&self.turn_state)),
+            early_final_answer_tool_name: None,
         }
     }
 
@@ -1317,6 +1318,7 @@ impl ModelClientSession {
                     model_info.use_responses_lite,
                 )
                 .await;
+            options.early_final_answer_tool_name = prompt.early_final_answer_tool_name.clone();
 
             let mut request = self.client.build_responses_request(
                 &client_setup.api_provider,
@@ -1525,6 +1527,11 @@ impl ModelClientSession {
                     ws_request,
                     self.websocket_session.connection_reused(),
                     Some(Arc::clone(&self.turn_state)),
+                    if warmup {
+                        None
+                    } else {
+                        prompt.early_final_answer_tool_name.clone()
+                    },
                 )
                 .await
                 .map_err(|err| {
@@ -1891,6 +1898,17 @@ where
                     {
                         return;
                     }
+                }
+                Ok(ResponseEvent::EarlyFinalAnswer(answer)) => {
+                    inference_trace_attempt.record_cancelled(
+                        "response stream closed after final_answer tool",
+                        upstream_request_id,
+                        &items_added,
+                    );
+                    let _ = tx_event
+                        .send(Ok(ResponseEvent::EarlyFinalAnswer(answer)))
+                        .await;
+                    return;
                 }
                 Ok(event) => {
                     if tx_event.send(Ok(event)).await.is_err() {
