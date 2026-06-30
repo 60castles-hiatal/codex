@@ -479,6 +479,9 @@
             "connectors": {
               "type": "boolean"
             },
+            "context_management_compaction": {
+              "type": "boolean"
+            },
             "current_time_reminder": {
               "$ref": "#/definitions/FeatureToml_for_CurrentTimeReminderConfigToml"
             },
@@ -486,6 +489,9 @@
               "type": "boolean"
             },
             "deferred_executor": {
+              "type": "boolean"
+            },
+            "early_hangup": {
               "type": "boolean"
             },
             "elevated_windows_sandbox": {
@@ -4790,6 +4796,9 @@
         "connectors": {
           "type": "boolean"
         },
+        "context_management_compaction": {
+          "type": "boolean"
+        },
         "current_time_reminder": {
           "$ref": "#/definitions/FeatureToml_for_CurrentTimeReminderConfigToml"
         },
@@ -4797,6 +4806,9 @@
           "type": "boolean"
         },
         "deferred_executor": {
+          "type": "boolean"
+        },
+        "early_hangup": {
           "type": "boolean"
         },
         "elevated_windows_sandbox": {

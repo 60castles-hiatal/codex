@@ -318,6 +318,13 @@ fn non_openai_model_provider(server: &MockServer) -> ModelProviderInfo {
     provider
 }
 
+fn openai_model_provider(server: &MockServer) -> ModelProviderInfo {
+    let mut provider = built_in_model_providers(/*openai_base_url*/ None)["openai"].clone();
+    provider.base_url = Some(format!("{}/v1", server.uri()));
+    provider.supports_websockets = false;
+    provider
+}
+
 fn write_global_file(
     home: &TempDir,
     filename: &str,
@@ -412,6 +419,41 @@ fn model_info_with_context_window(slug: &str, context_window: i64) -> ModelInfo 
         .expect("model missing from models.json");
     model_info.context_window = Some(context_window);
     model_info
+}
+
+async fn build_context_management_compaction_codex(
+    server: &MockServer,
+    model_provider: ModelProviderInfo,
+    auto_compaction_enabled: bool,
+    context_management_compaction_enabled: bool,
+    context_window: Option<i64>,
+    max_context_window: Option<i64>,
+) -> TestCodex {
+    test_codex()
+        .with_model("gpt-5.4")
+        .with_model_info_override("gpt-5.4", move |model_info| {
+            model_info.context_window = context_window;
+            model_info.max_context_window = max_context_window;
+        })
+        .with_config(move |config| {
+            config.model_provider = model_provider;
+            config.model_auto_compact_token_limit = None;
+            if auto_compaction_enabled {
+                let _ = config.features.enable(Feature::AutoCompaction);
+            } else {
+                let _ = config.features.disable(Feature::AutoCompaction);
+            }
+            if context_management_compaction_enabled {
+                let _ = config.features.enable(Feature::ContextManagementCompaction);
+            } else {
+                let _ = config
+                    .features
+                    .disable(Feature::ContextManagementCompaction);
+            }
+        })
+        .build(server)
+        .await
+        .expect("build codex")
 }
 
 fn model_info_with_optional_comp_hash(slug: &str, comp_hash: Option<&str>) -> ModelInfo {
@@ -3822,6 +3864,245 @@ async fn auto_compaction_feature_disabled_skips_mid_turn_compaction() {
             SUMMARIZATION_PROMPT
         ),
         "disabled auto-compaction should continue without a compaction request"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_management_compaction_sends_threshold_from_max_context_window() {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("m1", FIRST_REPLY),
+            ev_completed("r1"),
+        ]),
+    )
+    .await;
+    let test = build_context_management_compaction_codex(
+        &server,
+        openai_model_provider(&server),
+        /*auto_compaction_enabled*/ true,
+        /*context_management_compaction_enabled*/ true,
+        Some(273_000),
+        Some(400_000),
+    )
+    .await;
+
+    test.submit_turn("CONTEXT_MANAGEMENT_ENABLED")
+        .await
+        .expect("submit turn");
+
+    let body = response_mock.single_request().body_json();
+    assert_eq!(
+        body.get("context_management"),
+        Some(&json!([{"type": "compaction", "compact_threshold": 360000}]))
+    );
+}
+
+async fn assert_context_management_compaction_omitted(
+    server: &MockServer,
+    model_provider: ModelProviderInfo,
+    auto_compaction_enabled: bool,
+    context_management_compaction_enabled: bool,
+    context_window: Option<i64>,
+    max_context_window: Option<i64>,
+) {
+    let response_mock = mount_sse_once(
+        server,
+        sse(vec![
+            ev_assistant_message("m1", FIRST_REPLY),
+            ev_completed("r1"),
+        ]),
+    )
+    .await;
+    let test = build_context_management_compaction_codex(
+        server,
+        model_provider,
+        auto_compaction_enabled,
+        context_management_compaction_enabled,
+        context_window,
+        max_context_window,
+    )
+    .await;
+
+    test.submit_turn("CONTEXT_MANAGEMENT_DISABLED")
+        .await
+        .expect("submit turn");
+
+    assert!(
+        response_mock
+            .single_request()
+            .body_json()
+            .get("context_management")
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_management_compaction_is_gated() {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+    assert_context_management_compaction_omitted(
+        &server,
+        openai_model_provider(&server),
+        /*auto_compaction_enabled*/ true,
+        /*context_management_compaction_enabled*/ false,
+        Some(273_000),
+        Some(400_000),
+    )
+    .await;
+
+    let server = start_mock_server().await;
+    assert_context_management_compaction_omitted(
+        &server,
+        openai_model_provider(&server),
+        /*auto_compaction_enabled*/ false,
+        /*context_management_compaction_enabled*/ true,
+        Some(273_000),
+        Some(400_000),
+    )
+    .await;
+
+    let server = start_mock_server().await;
+    assert_context_management_compaction_omitted(
+        &server,
+        non_openai_model_provider(&server),
+        /*auto_compaction_enabled*/ true,
+        /*context_management_compaction_enabled*/ true,
+        Some(273_000),
+        Some(400_000),
+    )
+    .await;
+
+    let server = start_mock_server().await;
+    assert_context_management_compaction_omitted(
+        &server,
+        openai_model_provider(&server),
+        /*auto_compaction_enabled*/ true,
+        /*context_management_compaction_enabled*/ true,
+        /*context_window*/ None,
+        /*max_context_window*/ None,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_management_compaction_retries_without_field_when_rejected() {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse_failed(
+                "response-failed",
+                "invalid_prompt",
+                "Unknown parameter: context_management",
+            ),
+            sse(vec![
+                ev_assistant_message("m1", FIRST_REPLY),
+                ev_completed("r1"),
+            ]),
+        ],
+    )
+    .await;
+    let test = build_context_management_compaction_codex(
+        &server,
+        openai_model_provider(&server),
+        /*auto_compaction_enabled*/ true,
+        /*context_management_compaction_enabled*/ true,
+        Some(273_000),
+        Some(400_000),
+    )
+    .await;
+
+    test.submit_turn("CONTEXT_MANAGEMENT_RETRY")
+        .await
+        .expect("submit turn");
+
+    let requests = response_mock.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0].body_json().get("context_management"),
+        Some(&json!([{"type": "compaction", "compact_threshold": 360000}]))
+    );
+    assert!(requests[1].body_json().get("context_management").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_management_compaction_item_prunes_follow_up_history() {
+    skip_if_no_network!();
+
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "id": "cmp-1",
+                        "type": "context_compaction",
+                        "encrypted_content": "encrypted-prior-state"
+                    }
+                }),
+                ev_assistant_message("m1", FIRST_REPLY),
+                ev_completed("r1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("m2", FINAL_REPLY),
+                ev_completed("r2"),
+            ]),
+        ],
+    )
+    .await;
+    let test = build_context_management_compaction_codex(
+        &server,
+        openai_model_provider(&server),
+        /*auto_compaction_enabled*/ true,
+        /*context_management_compaction_enabled*/ true,
+        Some(273_000),
+        Some(400_000),
+    )
+    .await;
+
+    test.submit_turn("BEFORE_SERVER_COMPACTION")
+        .await
+        .expect("submit first turn");
+    test.submit_turn("AFTER_SERVER_COMPACTION")
+        .await
+        .expect("submit second turn");
+
+    let requests = response_mock.requests();
+    assert_eq!(requests.len(), 2);
+    let follow_up_body = requests[1].body_json();
+    let follow_up_input = follow_up_body
+        .get("input")
+        .and_then(Value::as_array)
+        .expect("input array");
+    assert!(
+        follow_up_input.iter().any(|item| {
+            item.get("type").and_then(Value::as_str) == Some("context_compaction")
+                && item.get("encrypted_content").and_then(Value::as_str)
+                    == Some("encrypted-prior-state")
+        }),
+        "follow-up request should retain the latest server compaction item"
+    );
+    let follow_up_body = follow_up_body.to_string();
+    assert!(
+        body_contains_text(&follow_up_body, FIRST_REPLY),
+        "follow-up request should retain items emitted after server compaction"
+    );
+    assert!(
+        body_contains_text(&follow_up_body, "AFTER_SERVER_COMPACTION"),
+        "follow-up request should include the new user input"
+    );
+    assert!(
+        !body_contains_text(&follow_up_body, "BEFORE_SERVER_COMPACTION"),
+        "follow-up request should drop items before the latest server compaction item"
     );
 }
 
