@@ -16,6 +16,8 @@ use eventsource_stream::Eventsource;
 use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -31,11 +33,28 @@ const OPENAI_MODEL_HEADER: &str = "openai-model";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION: &str = "trusted_access_for_cyber";
 
-pub fn spawn_response_stream(
+#[cfg(test)]
+fn spawn_response_stream(
     stream_response: StreamResponse,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
     turn_state: Option<Arc<OnceLock<String>>>,
+) -> ResponseStream {
+    spawn_response_stream_with_early_final_answer(
+        stream_response,
+        idle_timeout,
+        telemetry,
+        turn_state,
+        /*early_final_answer_tool_name*/ None,
+    )
+}
+
+pub fn spawn_response_stream_with_early_final_answer(
+    stream_response: StreamResponse,
+    idle_timeout: Duration,
+    telemetry: Option<Arc<dyn SseTelemetry>>,
+    turn_state: Option<Arc<OnceLock<String>>>,
+    early_final_answer_tool_name: Option<String>,
 ) -> ResponseStream {
     let rate_limit_snapshots = parse_all_rate_limits(&stream_response.headers);
     let models_etag = stream_response
@@ -89,6 +108,7 @@ pub fn spawn_response_stream(
             idle_timeout,
             telemetry,
             safety_buffering_treatment,
+            early_final_answer_tool_name.map(EarlyFinalAnswerState::new),
         )
         .await;
     });
@@ -167,6 +187,8 @@ pub struct ResponsesStreamEvent {
     item_id: Option<String>,
     call_id: Option<String>,
     delta: Option<String>,
+    arguments: Option<String>,
+    answer: Option<String>,
     summary_index: Option<i64>,
     content_index: Option<i64>,
     safety_buffering: Option<Value>,
@@ -324,6 +346,11 @@ pub fn process_responses_event(
                 debug!("failed to parse ResponseItem from output_item.done");
             }
         }
+        "codex.early_final_answer" => {
+            if let Some(answer) = event.answer {
+                return Ok(Some(ResponseEvent::EarlyFinalAnswer(answer)));
+            }
+        }
         "response.output_text.delta" => {
             if let Some(delta) = event.delta {
                 return Ok(Some(ResponseEvent::OutputTextDelta(delta)));
@@ -333,6 +360,15 @@ pub fn process_responses_event(
             if let (Some(delta), Some(item_id)) =
                 (event.delta, event.item_id.clone().or(event.call_id.clone()))
             {
+                return Ok(Some(ResponseEvent::ToolCallInputDelta {
+                    item_id,
+                    call_id: event.call_id,
+                    delta,
+                }));
+            }
+        }
+        "response.function_call_arguments.delta" => {
+            if let (Some(delta), Some(item_id)) = (event.delta, event.item_id.clone()) {
                 return Ok(Some(ResponseEvent::ToolCallInputDelta {
                     item_id,
                     call_id: event.call_id,
@@ -448,6 +484,155 @@ pub fn process_responses_event(
     Ok(None)
 }
 
+#[derive(Debug)]
+pub(crate) struct EarlyFinalAnswerState {
+    tool_name: String,
+    final_answer_item_ids: HashSet<String>,
+    argument_buffers: HashMap<String, String>,
+    saw_non_final_tool_call: bool,
+}
+
+impl EarlyFinalAnswerState {
+    pub(crate) fn new(tool_name: String) -> Self {
+        Self {
+            tool_name,
+            final_answer_item_ids: HashSet::new(),
+            argument_buffers: HashMap::new(),
+            saw_non_final_tool_call: false,
+        }
+    }
+
+    pub(crate) fn observe_event(&mut self, event: &ResponsesStreamEvent) -> Option<String> {
+        match event.kind.as_str() {
+            "response.output_item.added" => {
+                if let Some(item) = response_item_from_value(event.item.as_ref()) {
+                    self.observe_output_item(&item);
+                }
+                None
+            }
+            "response.output_item.done" => {
+                let item = response_item_from_value(event.item.as_ref())?;
+                self.final_answer_from_done_item(&item)
+            }
+            "response.function_call_arguments.delta" => self.observe_function_call_arguments_delta(
+                event.item_id.as_deref(),
+                event.call_id.as_deref(),
+                event.delta.as_deref(),
+            ),
+            "response.function_call_arguments.done" => self.observe_function_call_arguments_done(
+                event.item_id.as_deref(),
+                event.call_id.as_deref(),
+                event.arguments.as_deref(),
+            ),
+            _ => None,
+        }
+    }
+
+    fn observe_output_item(&mut self, item: &ResponseItem) {
+        if self.is_final_answer_call(item) {
+            if let ResponseItem::FunctionCall { id, call_id, .. } = item {
+                if let Some(id) = id {
+                    self.final_answer_item_ids.insert(id.clone());
+                }
+                self.final_answer_item_ids.insert(call_id.clone());
+            }
+        } else if is_non_final_tool_call(item) {
+            self.saw_non_final_tool_call = true;
+        }
+    }
+
+    fn observe_function_call_arguments_delta(
+        &mut self,
+        item_id: Option<&str>,
+        call_id: Option<&str>,
+        delta: Option<&str>,
+    ) -> Option<String> {
+        let stream_item_id = self.matching_final_answer_id(item_id, call_id)?.to_string();
+        let arguments = self.argument_buffers.entry(stream_item_id).or_default();
+        arguments.push_str(delta?);
+        if self.saw_non_final_tool_call {
+            return None;
+        }
+        final_answer_from_arguments(arguments)
+    }
+
+    fn observe_function_call_arguments_done(
+        &mut self,
+        item_id: Option<&str>,
+        call_id: Option<&str>,
+        arguments: Option<&str>,
+    ) -> Option<String> {
+        let _ = self.matching_final_answer_id(item_id, call_id)?;
+        if self.saw_non_final_tool_call {
+            return None;
+        }
+        final_answer_from_arguments(arguments?)
+    }
+
+    fn final_answer_from_done_item(&mut self, item: &ResponseItem) -> Option<String> {
+        self.observe_output_item(item);
+        if self.saw_non_final_tool_call || !self.is_final_answer_call(item) {
+            return None;
+        }
+        let ResponseItem::FunctionCall { arguments, .. } = item else {
+            return None;
+        };
+        final_answer_from_arguments(arguments)
+    }
+
+    fn matching_final_answer_id<'a>(
+        &self,
+        item_id: Option<&'a str>,
+        call_id: Option<&'a str>,
+    ) -> Option<&'a str> {
+        item_id
+            .filter(|id| self.final_answer_item_ids.contains(*id))
+            .or_else(|| call_id.filter(|id| self.final_answer_item_ids.contains(*id)))
+    }
+
+    fn is_final_answer_call(&self, item: &ResponseItem) -> bool {
+        matches!(
+            item,
+            ResponseItem::FunctionCall {
+                name,
+                namespace: None,
+                ..
+            } if name == &self.tool_name
+        )
+    }
+}
+
+fn response_item_from_value(value: Option<&Value>) -> Option<ResponseItem> {
+    serde_json::from_value(value?.clone()).ok()
+}
+
+fn is_non_final_tool_call(item: &ResponseItem) -> bool {
+    match item {
+        ResponseItem::FunctionCall { .. } => true,
+        ResponseItem::LocalShellCall { .. }
+        | ResponseItem::ToolSearchCall { .. }
+        | ResponseItem::CustomToolCall { .. }
+        | ResponseItem::WebSearchCall { .. }
+        | ResponseItem::ImageGenerationCall { .. } => true,
+        ResponseItem::Message { .. }
+        | ResponseItem::AgentMessage { .. }
+        | ResponseItem::Reasoning { .. }
+        | ResponseItem::FunctionCallOutput { .. }
+        | ResponseItem::CustomToolCallOutput { .. }
+        | ResponseItem::ToolSearchOutput { .. }
+        | ResponseItem::Compaction { .. }
+        | ResponseItem::CompactionTrigger { .. }
+        | ResponseItem::ContextCompaction { .. }
+        | ResponseItem::Other => false,
+    }
+}
+
+fn final_answer_from_arguments(arguments: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(arguments).ok()?;
+    let answer = value.get("answer")?.as_str()?;
+    Some(answer.to_string())
+}
+
 #[cfg(test)]
 pub async fn process_sse(
     stream: ByteStream,
@@ -461,6 +646,7 @@ pub async fn process_sse(
         idle_timeout,
         telemetry,
         SafetyBufferingTreatment::default(),
+        /*early_final_answer_state*/ None,
     )
     .await;
 }
@@ -471,6 +657,7 @@ async fn process_sse_with_treatment(
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn SseTelemetry>>,
     safety_buffering_treatment: SafetyBufferingTreatment,
+    mut early_final_answer_state: Option<EarlyFinalAnswerState>,
 ) {
     let mut stream = stream.eventsource();
     let mut response_error: Option<ApiError> = None;
@@ -553,6 +740,15 @@ async fn process_sse_with_treatment(
                 .await
                 .is_err()
         {
+            return;
+        }
+
+        if let Some(state) = early_final_answer_state.as_mut()
+            && let Some(answer) = state.observe_event(&event)
+        {
+            let _ = tx_event
+                .send(Ok(ResponseEvent::EarlyFinalAnswer(answer)))
+                .await;
             return;
         }
 
@@ -718,6 +914,66 @@ mod tests {
         out
     }
 
+    async fn run_sse_with_early_final_answer(
+        events: Vec<serde_json::Value>,
+        tool_name: &str,
+    ) -> Vec<ResponseEvent> {
+        let mut body = String::new();
+        for e in events {
+            let kind = e
+                .get("type")
+                .and_then(|v| v.as_str())
+                .expect("fixture event missing type");
+            body.push_str(&format!("event: {kind}\ndata: {e}\n\n"));
+        }
+
+        let (tx, mut rx) = mpsc::channel::<Result<ResponseEvent, ApiError>>(8);
+        let stream = ReaderStream::new(std::io::Cursor::new(body))
+            .map_err(|err| TransportError::Network(err.to_string()));
+        tokio::spawn(process_sse_with_treatment(
+            Box::pin(stream),
+            tx,
+            idle_timeout(),
+            /*telemetry*/ None,
+            SafetyBufferingTreatment::default(),
+            Some(EarlyFinalAnswerState::new(tool_name.to_string())),
+        ));
+
+        let mut out = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            out.push(ev.expect("channel closed"));
+        }
+        out
+    }
+
+    fn final_answer_added() -> serde_json::Value {
+        json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "fc-final",
+                "name": "final_answer",
+                "arguments": "",
+                "call_id": "call-final",
+            }
+        })
+    }
+
+    fn final_answer_arguments_delta(arguments: &str) -> serde_json::Value {
+        json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc-final",
+            "delta": arguments,
+        })
+    }
+
+    fn response_completed() -> serde_json::Value {
+        json!({
+            "type": "response.completed",
+            "response": { "id": "resp1" }
+        })
+    }
+
     fn idle_timeout() -> Duration {
         Duration::from_millis(1000)
     }
@@ -881,7 +1137,107 @@ mod tests {
                 delta,
             } if item_id == "ctc_1" && call_id == "call_1" && delta == "*** Begin"
         );
-        assert_matches!(&events[1], ResponseEvent::Completed { .. });
+        assert_matches!(
+            &events[1],
+            ResponseEvent::ToolCallInputDelta {
+                item_id,
+                call_id: None,
+                delta,
+            } if item_id == "fc_1" && delta == "{\"input\":\""
+        );
+        assert_matches!(&events[2], ResponseEvent::Completed { .. });
+    }
+
+    #[tokio::test]
+    async fn early_final_answer_stops_before_completed() {
+        let events = run_sse_with_early_final_answer(
+            vec![
+                final_answer_added(),
+                final_answer_arguments_delta(r#"{"answer":"done"}"#),
+                response_completed(),
+            ],
+            "final_answer",
+        )
+        .await;
+
+        assert_eq!(events.len(), 2);
+        assert_matches!(&events[0], ResponseEvent::OutputItemAdded(_));
+        assert_matches!(&events[1], ResponseEvent::EarlyFinalAnswer(answer) if answer == "done");
+    }
+
+    #[tokio::test]
+    async fn early_final_answer_stops_on_arguments_done() {
+        let events = run_sse_with_early_final_answer(
+            vec![
+                final_answer_added(),
+                json!({
+                    "type": "response.function_call_arguments.done",
+                    "item_id": "fc-final",
+                    "arguments": r#"{"answer":"done"}"#,
+                }),
+                response_completed(),
+            ],
+            "final_answer",
+        )
+        .await;
+
+        assert_eq!(events.len(), 2);
+        assert_matches!(&events[0], ResponseEvent::OutputItemAdded(_));
+        assert_matches!(&events[1], ResponseEvent::EarlyFinalAnswer(answer) if answer == "done");
+    }
+
+    #[tokio::test]
+    async fn early_final_answer_stops_on_done_item_without_added_event() {
+        let events = run_sse_with_early_final_answer(
+            vec![
+                json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc-final",
+                        "name": "final_answer",
+                        "arguments": r#"{"answer":"done"}"#,
+                        "call_id": "call-final",
+                    }
+                }),
+                response_completed(),
+            ],
+            "final_answer",
+        )
+        .await;
+
+        assert_eq!(events.len(), 1);
+        assert_matches!(&events[0], ResponseEvent::EarlyFinalAnswer(answer) if answer == "done");
+    }
+
+    #[tokio::test]
+    async fn early_final_answer_waits_when_real_tool_was_seen() {
+        let events = run_sse_with_early_final_answer(
+            vec![
+                json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc-real",
+                        "name": "update_goal",
+                        "arguments": "",
+                        "call_id": "call-real",
+                    }
+                }),
+                final_answer_added(),
+                final_answer_arguments_delta(r#"{"answer":"done"}"#),
+                response_completed(),
+            ],
+            "final_answer",
+        )
+        .await;
+
+        assert_matches!(&events.last(), Some(ResponseEvent::Completed { .. }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, ResponseEvent::EarlyFinalAnswer(_)))
+        );
     }
 
     #[tokio::test]

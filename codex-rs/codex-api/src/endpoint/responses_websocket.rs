@@ -7,6 +7,7 @@ use crate::error::ApiError;
 use crate::provider::Provider;
 use crate::rate_limits::parse_rate_limit_event;
 use crate::safety_buffering::treatment_from_headers;
+use crate::sse::EarlyFinalAnswerState;
 use crate::sse::ResponsesStreamEvent;
 use crate::sse::process_responses_event;
 use crate::telemetry::WebsocketTelemetry;
@@ -58,6 +59,7 @@ struct WsStream {
 enum WsCommand {
     Send {
         message: Message,
+        early_final_answer_tool_name: Option<String>,
         tx_result: oneshot::Sender<Result<(), WsError>>,
     },
 }
@@ -69,6 +71,7 @@ impl WsStream {
 
         let pump_task = tokio::spawn(async move {
             let mut inner = inner;
+            let mut early_final_answer_state: Option<EarlyFinalAnswerState> = None;
             loop {
                 tokio::select! {
                     command = rx_command.recv() => {
@@ -76,7 +79,13 @@ impl WsStream {
                             break;
                         };
                         match command {
-                            WsCommand::Send { message, tx_result } => {
+                            WsCommand::Send {
+                                message,
+                                early_final_answer_tool_name,
+                                tx_result,
+                            } => {
+                                early_final_answer_state =
+                                    early_final_answer_tool_name.map(EarlyFinalAnswerState::new);
                                 let result = inner.send(message).await;
                                 let should_break = result.is_err();
                                 let _ = tx_result.send(result);
@@ -102,6 +111,20 @@ impl WsStream {
                             | Message::Binary(_)
                             | Message::Close(_)
                             | Message::Frame(_))) => {
+                                if let Message::Text(text) = &message
+                                    && let Some(state) = early_final_answer_state.as_mut()
+                                    && let Ok(event) =
+                                        serde_json::from_str::<ResponsesStreamEvent>(text)
+                                    && let Some(answer) = state.observe_event(&event)
+                                {
+                                    let event = serde_json::json!({
+                                        "type": "codex.early_final_answer",
+                                        "answer": answer,
+                                    });
+                                    let _ = tx_message
+                                        .send(Ok(Message::Text(event.to_string().into())));
+                                    break;
+                                }
                                 let is_close = matches!(message, Message::Close(_));
                                 if tx_message.send(Ok(message)).is_err() {
                                     break;
@@ -138,9 +161,17 @@ impl WsStream {
         rx_result.await.unwrap_or(Err(WsError::ConnectionClosed))
     }
 
-    async fn send(&self, message: Message) -> Result<(), WsError> {
-        self.request(|tx_result| WsCommand::Send { message, tx_result })
-            .await
+    async fn send(
+        &self,
+        message: Message,
+        early_final_answer_tool_name: Option<String>,
+    ) -> Result<(), WsError> {
+        self.request(|tx_result| WsCommand::Send {
+            message,
+            early_final_answer_tool_name,
+            tx_result,
+        })
+        .await
     }
 
     async fn next(&mut self) -> Option<Result<Message, WsError>> {
@@ -218,6 +249,7 @@ impl ResponsesWebsocketConnection {
         request: ResponsesWsRequest,
         connection_reused: bool,
         turn_state: Option<Arc<OnceLock<String>>>,
+        early_final_answer_tool_name: Option<String>,
     ) -> Result<ResponseStream, ApiError> {
         let (tx_event, rx_event) =
             mpsc::channel::<std::result::Result<ResponseEvent, ApiError>>(1600);
@@ -259,24 +291,35 @@ impl ResponsesWebsocketConnection {
                     };
 
                     run_websocket_response_stream(
-                        ws_stream,
-                        tx_event.clone(),
                         request_text,
-                        idle_timeout,
-                        telemetry,
-                        connection_reused,
-                        turn_state.as_deref(),
+                        WebsocketResponseStreamOptions {
+                            ws_stream,
+                            tx_event: tx_event.clone(),
+                            idle_timeout,
+                            telemetry,
+                            connection_reused,
+                            turn_state: turn_state.as_deref(),
+                            early_final_answer_tool_name,
+                        },
                     )
                     .await
                 };
 
-                if let Err(err) = result {
-                    // A terminal stream error should reach the caller immediately. Waiting for a
-                    // graceful close handshake here can stall indefinitely and mask the error.
-                    let failed_stream = guard.take();
-                    drop(guard);
-                    drop(failed_stream);
-                    let _ = tx_event.send(Err(err)).await;
+                match result {
+                    Ok(WebsocketResponseStreamEnd::Completed) => {}
+                    Ok(WebsocketResponseStreamEnd::ClosedEarly) => {
+                        let closed_stream = guard.take();
+                        drop(guard);
+                        drop(closed_stream);
+                    }
+                    Err(err) => {
+                        // A terminal stream error should reach the caller immediately. Waiting for a
+                        // graceful close handshake here can stall indefinitely and mask the error.
+                        let failed_stream = guard.take();
+                        drop(guard);
+                        drop(failed_stream);
+                        let _ = tx_event.send(Err(err)).await;
+                    }
                 }
             }
             .instrument(current_span),
@@ -626,15 +669,35 @@ fn json_header_value(value: &Value) -> Option<HeaderValue> {
     HeaderValue::from_str(&value).ok()
 }
 
-async fn run_websocket_response_stream(
-    ws_stream: &mut WsStream,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebsocketResponseStreamEnd {
+    Completed,
+    ClosedEarly,
+}
+
+struct WebsocketResponseStreamOptions<'a> {
+    ws_stream: &'a mut WsStream,
     tx_event: mpsc::Sender<std::result::Result<ResponseEvent, ApiError>>,
-    request_text: String,
     idle_timeout: Duration,
     telemetry: Option<Arc<dyn WebsocketTelemetry>>,
     connection_reused: bool,
-    turn_state: Option<&OnceLock<String>>,
-) -> Result<(), ApiError> {
+    turn_state: Option<&'a OnceLock<String>>,
+    early_final_answer_tool_name: Option<String>,
+}
+
+async fn run_websocket_response_stream(
+    request_text: String,
+    options: WebsocketResponseStreamOptions<'_>,
+) -> Result<WebsocketResponseStreamEnd, ApiError> {
+    let WebsocketResponseStreamOptions {
+        ws_stream,
+        tx_event,
+        idle_timeout,
+        telemetry,
+        connection_reused,
+        turn_state,
+        early_final_answer_tool_name,
+    } = options;
     let mut last_server_model: Option<String> = None;
     let mut safety_buffering_treatment = SafetyBufferingTreatment::default();
     send_websocket_request(
@@ -643,6 +706,7 @@ async fn run_websocket_response_stream(
         idle_timeout,
         telemetry.as_ref(),
         connection_reused,
+        early_final_answer_tool_name,
     )
     .await?;
 
@@ -748,9 +812,14 @@ async fn run_websocket_response_stream(
                 match process_responses_event(event) {
                     Ok(Some(event)) => {
                         let is_completed = matches!(event, ResponseEvent::Completed { .. });
+                        let is_early_final_answer =
+                            matches!(event, ResponseEvent::EarlyFinalAnswer(_));
                         let _ = tx_event.send(Ok(event)).await;
                         if is_completed {
-                            break;
+                            return Ok(WebsocketResponseStreamEnd::Completed);
+                        }
+                        if is_early_final_answer {
+                            return Ok(WebsocketResponseStreamEnd::ClosedEarly);
                         }
                     }
                     Ok(None) => {}
@@ -771,8 +840,6 @@ async fn run_websocket_response_stream(
             Message::Ping(_) | Message::Pong(_) => {}
         }
     }
-
-    Ok(())
 }
 
 async fn send_websocket_request(
@@ -781,13 +848,17 @@ async fn send_websocket_request(
     idle_timeout: Duration,
     telemetry: Option<&Arc<dyn WebsocketTelemetry>>,
     connection_reused: bool,
+    early_final_answer_tool_name: Option<String>,
 ) -> Result<(), ApiError> {
     trace!("websocket request: {request_text}");
 
     let request_start = Instant::now();
     let result = tokio::time::timeout(
         idle_timeout,
-        ws_stream.send(Message::Text(request_text.into())),
+        ws_stream.send(
+            Message::Text(request_text.into()),
+            early_final_answer_tool_name,
+        ),
     )
     .await
     .map_err(|_| ApiError::Stream("idle timeout sending websocket request".into()))
