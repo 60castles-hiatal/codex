@@ -11,9 +11,8 @@ use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadSource;
+#[cfg(test)]
 use codex_utils_string::to_ascii_json_string;
-use http::HeaderMap as ApiHeaderMap;
-use http::HeaderValue;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -128,12 +127,7 @@ pub(crate) struct TurnMetadataWorkspace {
     pub(crate) has_changes: Option<bool>,
 }
 
-/// Caller-owned snapshot of Codex metadata sent to ResponsesAPI.
-///
-/// The full Codex turn metadata blob is transported canonically as
-/// `client_metadata["x-codex-turn-metadata"]`. Flat `client_metadata` keys and direct HTTP/ws
-/// headers are generated compatibility projections of this snapshot, not separate sources of
-/// truth.
+/// Caller-owned snapshot of Codex metadata for local bookkeeping and tool context.
 #[derive(Clone, Debug)]
 pub struct CodexResponsesMetadata {
     pub(crate) installation_id: String,
@@ -144,7 +138,6 @@ pub struct CodexResponsesMetadata {
     pub(crate) request_kind: Option<CodexResponsesRequestKind>,
     pub(crate) forked_from_thread_id: Option<ThreadId>,
     pub(crate) parent_thread_id: Option<ThreadId>,
-    pub(crate) subagent_header: Option<String>,
     pub(crate) subagent_kind: Option<String>,
     pub(crate) thread_source: Option<ThreadSource>,
     pub(crate) sandbox: Option<String>,
@@ -169,7 +162,6 @@ impl CodexResponsesMetadata {
             request_kind: None,
             forked_from_thread_id: None,
             parent_thread_id: None,
-            subagent_header: None,
             subagent_kind: None,
             thread_source: None,
             sandbox: None,
@@ -183,72 +175,13 @@ impl CodexResponsesMetadata {
         self.request_kind.is_some()
     }
 
+    #[cfg(test)]
     pub(crate) fn turn_metadata_json(&self) -> Option<String> {
         to_ascii_json_string(&self.turn_metadata_payload()).ok()
     }
 
     pub(crate) fn turn_metadata_value(&self) -> Option<Value> {
         serde_json::to_value(self.turn_metadata_payload()).ok()
-    }
-
-    pub(crate) fn client_metadata(&self) -> HashMap<String, String> {
-        let mut client_metadata = HashMap::from([
-            (
-                X_CODEX_INSTALLATION_ID_HEADER.to_string(),
-                self.installation_id.clone(),
-            ),
-            (SESSION_ID_KEY.to_string(), self.session_id.clone()),
-            (THREAD_ID_KEY.to_string(), self.thread_id.clone()),
-            (X_CODEX_WINDOW_ID_HEADER.to_string(), self.window_id.clone()),
-        ]);
-        if let Some(turn_id) = &self.turn_id {
-            client_metadata.insert(TURN_ID_KEY.to_string(), turn_id.clone());
-        }
-        if let Some(subagent_header) = &self.subagent_header {
-            client_metadata.insert(
-                X_OPENAI_SUBAGENT_HEADER.to_string(),
-                subagent_header.clone(),
-            );
-        }
-        if let Some(parent_thread_id) = self.parent_thread_id {
-            client_metadata.insert(
-                X_CODEX_PARENT_THREAD_ID_HEADER.to_string(),
-                parent_thread_id.to_string(),
-            );
-        }
-        if self.has_turn_metadata()
-            && let Some(turn_metadata_json) = self.turn_metadata_json()
-        {
-            client_metadata.insert(X_CODEX_TURN_METADATA_HEADER.to_string(), turn_metadata_json);
-        }
-        client_metadata
-    }
-
-    pub(crate) fn compatibility_headers(&self) -> ApiHeaderMap {
-        let mut headers = ApiHeaderMap::new();
-        insert_header(&mut headers, X_CODEX_WINDOW_ID_HEADER, &self.window_id);
-        // Direct x-codex-turn-metadata is compatibility output. New per-request consumers should
-        // prefer client_metadata["x-codex-turn-metadata"], which is rendered from this same object.
-        if self.has_turn_metadata()
-            && let Some(turn_metadata_json) = self.turn_metadata_json()
-        {
-            insert_header(
-                &mut headers,
-                X_CODEX_TURN_METADATA_HEADER,
-                &turn_metadata_json,
-            );
-        }
-        if let Some(parent_thread_id) = self.parent_thread_id {
-            insert_header(
-                &mut headers,
-                X_CODEX_PARENT_THREAD_ID_HEADER,
-                &parent_thread_id.to_string(),
-            );
-        }
-        if let Some(subagent_header) = &self.subagent_header {
-            insert_header(&mut headers, X_OPENAI_SUBAGENT_HEADER, subagent_header);
-        }
-        headers
     }
 
     fn turn_metadata_payload(&self) -> CodexTurnMetadataPayload<'_> {
@@ -317,12 +250,6 @@ pub(crate) fn subagent_metadata_kind(session_source: &SessionSource) -> Option<S
         | SessionSource::Custom(_)
         | SessionSource::Internal(_)
         | SessionSource::Unknown => None,
-    }
-}
-
-fn insert_header(headers: &mut ApiHeaderMap, name: &'static str, value: &str) {
-    if let Ok(header_value) = HeaderValue::from_str(value) {
-        headers.insert(name, header_value);
     }
 }
 

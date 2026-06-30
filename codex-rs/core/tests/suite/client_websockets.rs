@@ -1,6 +1,4 @@
 #![allow(clippy::unwrap_used)]
-use codex_api::WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY;
-use codex_api::WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY;
 use codex_core::CodexResponsesMetadata;
 use codex_core::ModelClient;
 use codex_core::ModelClientSession;
@@ -15,7 +13,6 @@ use codex_otel::MetricsClient;
 use codex_otel::MetricsConfig;
 use codex_otel::SessionTelemetry;
 use codex_otel::TelemetryAuthMode;
-use codex_otel::current_span_w3c_trace_context;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
@@ -29,7 +26,6 @@ use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::ConversationPart;
 use codex_rollout_trace::InferenceTraceContext;
@@ -39,6 +35,7 @@ use codex_rollout_trace::replay_bundle;
 use core_test_support::TestCodexResponsesRequestKind;
 use core_test_support::load_default_config_for_test;
 use core_test_support::responses::WebSocketConnectionConfig;
+use core_test_support::responses::WebSocketHandshake;
 use core_test_support::responses::WebSocketTestServer;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -48,7 +45,6 @@ use core_test_support::responses::start_websocket_server_with_headers;
 use core_test_support::responses_metadata as test_responses_metadata;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
-use core_test_support::tracing::install_test_tracing;
 use core_test_support::wait_for_event;
 use futures::StreamExt;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
@@ -57,45 +53,36 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
-use tracing::Instrument;
 use tracing_test::traced_test;
 
 const MODEL: &str = "gpt-5.3-codex";
 const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
 const USER_AGENT_HEADER: &str = "user-agent";
 const WS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
-const X_CLIENT_REQUEST_ID_HEADER: &str = "x-client-request-id";
-const WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY: &str =
-    "ws_request_header_x_openai_internal_codex_responses_lite";
 const TEST_INSTALLATION_ID: &str = "11111111-1111-4111-8111-111111111111";
 const TEST_WINDOW_ID: &str = "test-thread:0";
-const X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY: &str =
-    "x-codex-ws-stream-request-start-ms";
 
-fn assert_request_trace_matches(body: &serde_json::Value, expected_trace: &W3cTraceContext) {
-    let client_metadata = body["client_metadata"]
-        .as_object()
-        .expect("missing client_metadata payload");
-    let actual_traceparent = client_metadata
-        .get(WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY)
-        .and_then(serde_json::Value::as_str)
-        .expect("missing traceparent");
-    let expected_traceparent = expected_trace
-        .traceparent
-        .as_deref()
-        .expect("missing expected traceparent");
-
-    assert_eq!(actual_traceparent, expected_traceparent);
-    assert_eq!(
-        client_metadata
-            .get(WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY)
-            .and_then(serde_json::Value::as_str),
-        expected_trace.tracestate.as_deref()
-    );
+fn assert_no_client_metadata(body: &serde_json::Value) {
     assert!(
-        body.get("trace").is_none(),
-        "top-level trace should not be sent"
+        body.get("client_metadata").is_none(),
+        "client_metadata should not be sent"
     );
+}
+
+fn assert_no_handshake_metadata_headers(handshake: &WebSocketHandshake) {
+    for header in [
+        "session-id",
+        "thread-id",
+        "x-client-request-id",
+        "x-openai-subagent",
+        "x-codex-installation-id",
+        "x-codex-window-id",
+        "x-codex-parent-thread-id",
+        "x-codex-turn-metadata",
+        "x-codex-sandbox",
+    ] {
+        assert_eq!(handshake.header(header), None, "{header} should be absent");
+    }
 }
 
 struct WebsocketTestHarness {
@@ -177,32 +164,11 @@ async fn responses_websocket_streams_request() {
         Some(WS_V2_BETA_HEADER_VALUE.to_string())
     );
     assert_eq!(
-        handshake.header(X_CLIENT_REQUEST_ID_HEADER),
-        Some(harness.thread_id.to_string())
-    );
-    assert_eq!(
-        handshake.header("session-id"),
-        Some(harness.session_id.to_string())
-    );
-    assert_eq!(
-        handshake.header("thread-id"),
-        Some(harness.thread_id.to_string())
-    );
-    assert_eq!(
         handshake.header(USER_AGENT_HEADER),
         Some(codex_login::default_client::get_codex_user_agent())
     );
-    assert_eq!(
-        body["client_metadata"]["x-codex-installation-id"].as_str(),
-        Some(TEST_INSTALLATION_ID)
-    );
-    let stream_request_start_ms = body["client_metadata"]
-        [X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY]
-        .as_str()
-        .expect("missing websocket stream request start timestamp")
-        .parse::<i64>()
-        .expect("websocket stream request start timestamp should be an integer");
-    assert!(stream_request_start_ms > 0);
+    assert_no_handshake_metadata_headers(&handshake);
+    assert_no_client_metadata(&body);
 
     server.shutdown().await;
 }
@@ -230,10 +196,8 @@ async fn responses_websocket_streams_without_feature_flag_when_provider_supports
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_reuses_connection_with_per_turn_trace_payloads() {
+async fn responses_websocket_reuses_connection_without_client_metadata_payloads() {
     skip_if_no_network!();
-
-    let _trace_test_context = install_test_tracing("client-websocket-test");
 
     let server = start_websocket_server(vec![vec![
         vec![ev_response_created("resp-1"), ev_completed("resp-1")],
@@ -245,29 +209,15 @@ async fn responses_websocket_reuses_connection_with_per_turn_trace_payloads() {
     let prompt_one = prompt_with_input(vec![message_item("hello")]);
     let prompt_two = prompt_with_input(vec![message_item("again")]);
 
-    let first_trace = {
+    {
         let mut client_session = harness.client.new_session();
-        async {
-            let expected_trace =
-                current_span_w3c_trace_context().expect("current span should have trace context");
-            stream_until_complete(&mut client_session, &harness, &prompt_one).await;
-            expected_trace
-        }
-        .instrument(tracing::info_span!("client.websocket.turn_one"))
-        .await
-    };
+        stream_until_complete(&mut client_session, &harness, &prompt_one).await;
+    }
 
-    let second_trace = {
+    {
         let mut client_session = harness.client.new_session();
-        async {
-            let expected_trace =
-                current_span_w3c_trace_context().expect("current span should have trace context");
-            stream_until_complete(&mut client_session, &harness, &prompt_two).await;
-            expected_trace
-        }
-        .instrument(tracing::info_span!("client.websocket.turn_two"))
-        .await
-    };
+        stream_until_complete(&mut client_session, &harness, &prompt_two).await;
+    }
 
     assert_eq!(server.handshakes().len(), 1);
     assert_eq!(
@@ -285,27 +235,17 @@ async fn responses_websocket_reuses_connection_with_per_turn_trace_payloads() {
         .get(1)
         .expect("missing second request")
         .body_json();
-    assert_request_trace_matches(&first_request, &first_trace);
-    assert_request_trace_matches(&second_request, &second_trace);
-
-    let first_traceparent = first_request["client_metadata"]
-        [WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY]
-        .as_str()
-        .expect("missing first traceparent");
-    let second_traceparent = second_request["client_metadata"]
-        [WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY]
-        .as_str()
-        .expect("missing second traceparent");
-    assert_ne!(first_traceparent, second_traceparent);
+    assert_no_client_metadata(&first_request);
+    assert_no_client_metadata(&second_request);
+    assert!(first_request.get("trace").is_none());
+    assert!(second_request.get("trace").is_none());
 
     server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_preconnect_does_not_replace_turn_trace_payload() {
+async fn responses_websocket_preconnect_stream_omits_client_metadata_payload() {
     skip_if_no_network!();
-
-    let _trace_test_context = install_test_tracing("client-websocket-test");
 
     let server = start_websocket_server(vec![vec![vec![
         ev_response_created("resp-1"),
@@ -321,21 +261,13 @@ async fn responses_websocket_preconnect_does_not_replace_turn_trace_payload() {
         .await
         .expect("websocket preconnect failed");
     let prompt = prompt_with_input(vec![message_item("hello")]);
-
-    let expected_trace = async {
-        let expected_trace =
-            current_span_w3c_trace_context().expect("current span should have trace context");
-        stream_until_complete(&mut client_session, &harness, &prompt).await;
-        expected_trace
-    }
-    .instrument(tracing::info_span!("client.websocket.request"))
-    .await;
+    stream_until_complete(&mut client_session, &harness, &prompt).await;
 
     assert_eq!(server.handshakes().len(), 1);
     let connection = server.single_connection();
     assert_eq!(connection.len(), 1);
     let request = connection.first().expect("missing request").body_json();
-    assert_request_trace_matches(&request, &expected_trace);
+    assert_no_client_metadata(&request);
 
     server.shutdown().await;
 }
@@ -365,10 +297,7 @@ async fn responses_websocket_preconnect_reuses_connection() {
         server.single_handshake().header(USER_AGENT_HEADER),
         Some(codex_login::default_client::get_codex_user_agent())
     );
-    assert_eq!(
-        server.single_handshake().header("x-codex-window-id"),
-        Some(TEST_WINDOW_ID.to_string())
-    );
+    assert_no_handshake_metadata_headers(&server.single_handshake());
     let connection = server.single_connection();
     assert_eq!(connection.len(), 1);
 
@@ -422,25 +351,17 @@ async fn responses_websocket_request_prewarm_reuses_connection() {
     assert_eq!(warmup["type"].as_str(), Some("response.create"));
     assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert_eq!(warmup["tools"], serde_json::json!([]));
-    let warmup_turn_metadata: serde_json::Value = serde_json::from_str(
-        warmup["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
-            .expect("warmup turn metadata"),
-    )
-    .expect("valid warmup turn metadata");
-    assert_eq!(
-        warmup_turn_metadata["request_kind"].as_str(),
-        Some("prewarm")
-    );
+    assert_no_client_metadata(&warmup);
     assert_eq!(follow_up["type"].as_str(), Some("response.create"));
     assert_eq!(follow_up["previous_response_id"].as_str(), Some("warm-1"));
     assert_eq!(follow_up["input"], serde_json::json!([]));
+    assert_no_client_metadata(&follow_up);
 
     server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_request_prewarm_uses_caller_supplied_metadata() {
+async fn responses_websocket_request_prewarm_omits_client_metadata() {
     skip_if_no_network!();
 
     let server = start_websocket_server(vec![vec![vec![
@@ -471,13 +392,7 @@ async fn responses_websocket_request_prewarm_uses_caller_supplied_metadata() {
         .first()
         .expect("missing warmup request")
         .body_json();
-    let warmup_turn_metadata: serde_json::Value = serde_json::from_str(
-        warmup["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
-            .expect("warmup turn metadata"),
-    )
-    .expect("valid warmup turn metadata");
-    assert_eq!(warmup_turn_metadata["request_kind"].as_str(), Some("turn"));
+    assert_no_client_metadata(&warmup);
 
     server.shutdown().await;
 }
@@ -619,7 +534,7 @@ async fn responses_websocket_reuses_connection_after_session_drop() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_sends_responses_lite_metadata_per_request() {
+async fn responses_websocket_sets_responses_lite_request_shape_without_client_metadata() {
     skip_if_no_network!();
 
     let server = start_websocket_server(vec![vec![
@@ -667,9 +582,8 @@ async fn responses_websocket_sends_responses_lite_metadata_per_request() {
             .iter()
             .map(|request| {
                 let body = request.body_json();
+                assert_no_client_metadata(&body);
                 json!({
-                    "responses_lite": body["client_metadata"]
-                        .get(WS_REQUEST_HEADER_RESPONSES_LITE_CLIENT_METADATA_KEY),
                     "reasoning_context": body["reasoning"].get("context"),
                     "parallel_tool_calls": body["parallel_tool_calls"],
                 })
@@ -677,17 +591,14 @@ async fn responses_websocket_sends_responses_lite_metadata_per_request() {
             .collect::<Vec<_>>(),
         vec![
             json!({
-                "responses_lite": null,
                 "reasoning_context": null,
                 "parallel_tool_calls": false,
             }),
             json!({
-                "responses_lite": "true",
                 "reasoning_context": "all_turns",
                 "parallel_tool_calls": false,
             }),
             json!({
-                "responses_lite": null,
                 "reasoning_context": null,
                 "parallel_tool_calls": false,
             }),
@@ -888,10 +799,7 @@ async fn responses_websocket_preconnect_runs_when_only_v2_feature_enabled() {
 
     assert_eq!(server.handshakes().len(), 1);
     assert_eq!(server.single_connection().len(), 0);
-    assert_eq!(
-        server.single_handshake().header("x-codex-turn-metadata"),
-        None
-    );
+    assert_no_handshake_metadata_headers(&server.single_handshake());
 
     let prompt = prompt_with_input(vec![message_item("hello")]);
     stream_until_complete(&mut client_session, &harness, &prompt).await;
@@ -1561,7 +1469,7 @@ async fn responses_websocket_uses_incremental_create_on_prefix() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_forwards_turn_metadata_on_initial_and_incremental_create() {
+async fn responses_websocket_omits_client_metadata_on_initial_and_incremental_create() {
     skip_if_no_network!();
 
     let mut first_output_item = ev_assistant_message("msg-1", "assistant output");
@@ -1615,35 +1523,15 @@ async fn responses_websocket_forwards_turn_metadata_on_initial_and_incremental_c
     assert_eq!(first["type"].as_str(), Some("response.create"));
     assert_eq!(second["type"].as_str(), Some("response.create"));
     assert_eq!(second["previous_response_id"].as_str(), Some("resp-1"));
-    let first_metadata: serde_json::Value = serde_json::from_str(
-        first["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
-            .expect("first turn metadata"),
-    )
-    .expect("first metadata should be valid json");
-    let second_metadata: serde_json::Value = serde_json::from_str(
-        second["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
-            .expect("second turn metadata"),
-    )
-    .expect("second metadata should be valid json");
-
-    assert_eq!(first_metadata["turn_id"].as_str(), Some("turn-123"));
-    assert_eq!(second_metadata["turn_id"].as_str(), Some("turn-456"));
-    assert_eq!(
-        first["client_metadata"]["turn_id"].as_str(),
-        first_metadata["turn_id"].as_str()
-    );
-    assert_eq!(
-        second["client_metadata"]["turn_id"].as_str(),
-        second_metadata["turn_id"].as_str()
-    );
+    assert_no_client_metadata(&first);
+    assert_no_client_metadata(&second);
+    assert_no_handshake_metadata_headers(&server.single_handshake());
 
     server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_sends_canonical_turn_metadata() {
+async fn responses_websocket_omits_turn_metadata_on_handshake() {
     skip_if_no_network!();
 
     let server = start_websocket_server(vec![vec![vec![
@@ -1673,17 +1561,8 @@ async fn responses_websocket_sends_canonical_turn_metadata() {
         .body_json();
 
     assert_eq!(body["type"].as_str(), Some("response.create"));
-    let turn_metadata: serde_json::Value = serde_json::from_str(
-        body["client_metadata"]["x-codex-turn-metadata"]
-            .as_str()
-            .expect("turn metadata"),
-    )
-    .expect("valid turn metadata");
-    assert_eq!(turn_metadata["turn_id"].as_str(), Some("turn-123"));
-    assert_eq!(
-        body["client_metadata"]["turn_id"].as_str(),
-        turn_metadata["turn_id"].as_str()
-    );
+    assert_no_client_metadata(&body);
+    assert_no_handshake_metadata_headers(&server.single_handshake());
 
     server.shutdown().await;
 }
