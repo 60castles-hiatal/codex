@@ -15,7 +15,6 @@ use core_test_support::responses::start_websocket_server_with_headers;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use pretty_assertions::assert_eq;
-use serde_json::Value;
 use serde_json::json;
 
 const TURN_STATE_HEADER: &str = "x-codex-turn-state";
@@ -66,30 +65,15 @@ async fn responses_turn_state_persists_within_turn_and_resets_after() -> Result<
     );
     assert_eq!(requests[2].header(TURN_STATE_HEADER), None);
 
-    let parse_turn_id = |header: Option<String>| {
-        let value = header?;
-        let parsed: Value = serde_json::from_str(&value).ok()?;
-        parsed
-            .get("turn_id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    };
-
-    let first_turn_id = parse_turn_id(requests[0].header("x-codex-turn-metadata"))
-        .expect("first request should include turn metadata turn_id");
-    let second_turn_id = parse_turn_id(requests[1].header("x-codex-turn-metadata"))
-        .expect("follow-up request should include turn metadata turn_id");
-    let third_turn_id = parse_turn_id(requests[2].header("x-codex-turn-metadata"))
-        .expect("new turn request should include turn metadata turn_id");
-
-    assert_eq!(first_turn_id, second_turn_id);
-    assert_ne!(second_turn_id, third_turn_id);
+    for request in requests {
+        assert_eq!(request.header("x-codex-turn-metadata"), None);
+    }
 
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_turn_state_persists_within_turn_and_resets_after() -> Result<()> {
+async fn websocket_turn_state_is_not_sent_as_client_metadata() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
@@ -132,12 +116,10 @@ async fn websocket_turn_state_persists_within_turn_and_resets_after() -> Result<
     assert_eq!(server.handshakes().len(), 1);
     let requests = server.single_connection();
     assert_eq!(requests.len(), 3);
-    assert_eq!(
+    assert!(
         requests
             .iter()
-            .map(|request| request.body_json()["client_metadata"][TURN_STATE_HEADER].clone())
-            .collect::<Vec<_>>(),
-        vec![json!(null), json!("ts-1"), json!(null)]
+            .all(|request| request.body_json().get("client_metadata").is_none())
     );
 
     server.shutdown().await;
@@ -190,12 +172,10 @@ async fn websocket_turn_state_is_stable_within_turn() -> Result<()> {
     assert_eq!(server.handshakes().len(), 1);
     let requests = server.single_connection();
     assert_eq!(requests.len(), 3);
-    assert_eq!(
+    assert!(
         requests
             .iter()
-            .map(|request| request.body_json()["client_metadata"][TURN_STATE_HEADER].clone())
-            .collect::<Vec<_>>(),
-        vec![json!(null), json!("ts-1"), json!("ts-1")]
+            .all(|request| request.body_json().get("client_metadata").is_none())
     );
 
     server.shutdown().await;

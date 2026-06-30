@@ -69,16 +69,10 @@ async fn guardian_session_prewarms_and_is_reused_for_first_review() -> Result<()
     })
     .await?;
     let prewarm_requests = [first.body_json(), second.body_json()];
-    let guardian_prewarm = prewarm_requests
-        .iter()
-        .find(|request| {
-            request["client_metadata"]["x-openai-subagent"].as_str() == Some("guardian")
-        })
-        .expect("guardian startup prewarm request");
-    assert_eq!(guardian_prewarm["generate"].as_bool(), Some(false));
-    let guardian_thread_id = guardian_prewarm["client_metadata"]["thread_id"]
-        .as_str()
-        .expect("guardian thread id");
+    for prewarm in prewarm_requests {
+        assert_eq!(prewarm["generate"].as_bool(), Some(false));
+        assert!(prewarm.get("client_metadata").is_none());
+    }
 
     test.codex
         .submit(
@@ -95,14 +89,11 @@ async fn guardian_session_prewarms_and_is_reused_for_first_review() -> Result<()
     )
     .await?
     .body_json();
-    assert_eq!(
-        guardian_review["client_metadata"]["x-openai-subagent"].as_str(),
-        Some("guardian")
-    );
-    assert_eq!(
-        guardian_review["client_metadata"]["thread_id"].as_str(),
-        Some(guardian_thread_id)
-    );
+    let review_handshakes = server.handshakes();
+    let guardian_review_handshake = review_handshakes.get(3).expect("guardian review handshake");
+    assert_eq!(guardian_review_handshake.header("x-openai-subagent"), None);
+    assert_eq!(guardian_review_handshake.header("thread-id"), None);
+    assert!(guardian_review.get("client_metadata").is_none());
     assert_eq!(guardian_review.get("generate"), None);
 
     test.codex.shutdown_and_wait().await?;

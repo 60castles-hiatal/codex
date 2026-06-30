@@ -152,97 +152,26 @@ fn response_message_item_id(request: &ResponsesRequest, role: &str, text: &str) 
         .unwrap_or_else(|| panic!("missing item ID for {role} message {text:?}"))
 }
 
-fn assert_codex_client_metadata(
-    request_body: &serde_json::Value,
-    installation_id: &str,
-    session_id: &str,
-    thread_id: &str,
+fn assert_no_codex_request_metadata_headers(
+    request: &ResponsesRequest,
+    _installation_id: &str,
+    _session_id: &str,
+    _thread_id: &str,
 ) {
-    let client_metadata = &request_body["client_metadata"];
-    assert_eq!(
-        client_metadata["x-codex-installation-id"].as_str(),
-        Some(installation_id)
-    );
-    assert_eq!(client_metadata["session_id"].as_str(), Some(session_id));
-    assert_eq!(client_metadata["thread_id"].as_str(), Some(thread_id));
-    let turn_metadata_str = client_metadata["x-codex-turn-metadata"]
-        .as_str()
-        .expect("missing x-codex-turn-metadata client metadata");
-    let turn_metadata = serde_json::from_str::<serde_json::Value>(turn_metadata_str)
-        .expect("invalid x-codex-turn-metadata json");
-    assert_eq!(
-        turn_metadata["installation_id"].as_str(),
-        Some(installation_id)
-    );
-    assert_eq!(turn_metadata["session_id"].as_str(), Some(session_id));
-    assert_eq!(turn_metadata["thread_id"].as_str(), Some(thread_id));
-    assert_eq!(
-        client_metadata["turn_id"].as_str(),
-        turn_metadata["turn_id"].as_str()
-    );
-    assert_eq!(
-        client_metadata["x-codex-window-id"].as_str(),
-        turn_metadata["window_id"].as_str()
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn openai_stateless_responses_requests_preserve_item_turn_metadata_across_turns() {
-    let server = MockServer::start().await;
-    let response_mock = mount_sse_sequence(
-        &server,
-        vec![
-            sse(vec![
-                ev_response_created("resp1"),
-                ev_assistant_message("msg-1", "first answer"),
-                ev_completed("resp1"),
-            ]),
-            sse(vec![ev_response_created("resp2"), ev_completed("resp2")]),
-        ],
-    )
-    .await;
-    let test = test_codex().build(&server).await.unwrap();
-
-    test.submit_turn("turn one").await.unwrap();
-    test.submit_turn("turn two").await.unwrap();
-
-    let requests = response_mock.requests();
-    assert_eq!(requests.len(), 2);
-    let first = requests[0].body_json();
-    let second = requests[1].body_json();
-    let first_turn_id = first["client_metadata"]["turn_id"]
-        .as_str()
-        .expect("first request should include turn id");
-    let second_turn_id = second["client_metadata"]["turn_id"]
-        .as_str()
-        .expect("second request should include turn id");
-    assert_ne!(first_turn_id, second_turn_id);
-
-    let first_input = first["input"].as_array().expect("first input");
-    let second_input = second["input"].as_array().expect("second input");
-    assert_eq!(&second_input[..first_input.len()], first_input.as_slice());
-    for item in first_input {
-        assert_eq!(
-            item["internal_chat_message_metadata_passthrough"]["turn_id"].as_str(),
-            Some(first_turn_id)
-        );
+    for header in [
+        "session-id",
+        "thread-id",
+        "x-client-request-id",
+        "x-openai-subagent",
+        "x-codex-installation-id",
+        "x-codex-window-id",
+        "x-codex-parent-thread-id",
+        "x-codex-turn-metadata",
+        "x-codex-sandbox",
+    ] {
+        assert_eq!(request.header(header), None, "{header} should be absent");
     }
-
-    let item_turn_id = |text: &str| {
-        second_input
-            .iter()
-            .find(|item| {
-                item["content"].as_array().is_some_and(|content| {
-                    content
-                        .iter()
-                        .any(|content_item| content_item["text"].as_str() == Some(text))
-                })
-            })
-            .and_then(|item| item["internal_chat_message_metadata_passthrough"]["turn_id"].as_str())
-    };
-    assert_eq!(item_turn_id("turn one"), Some(first_turn_id));
-    assert_eq!(item_turn_id("first answer"), Some(first_turn_id));
-    assert_eq!(item_turn_id("turn two"), Some(second_turn_id));
+    assert!(request.body_json().get("client_metadata").is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1089,8 +1018,6 @@ async fn includes_session_id_thread_id_and_model_headers_in_request() {
 
     let request = resp_mock.single_request();
     assert_eq!(request.path(), "/v1/responses");
-    let request_session_id = request.header("session-id").expect("session-id header");
-    let request_thread_id = request.header("thread-id").expect("thread-id header");
     let request_authorization = request
         .header("authorization")
         .expect("authorization header");
@@ -1102,16 +1029,14 @@ async fn includes_session_id_thread_id_and_model_headers_in_request() {
     let session_id_string = expected_session_id.to_string();
     let thread_id_string = expected_thread_id.to_string();
 
-    assert_eq!(request_session_id, session_id_string.as_str());
-    assert_eq!(request_thread_id, thread_id_string.as_str());
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Test API Key");
     assert_eq!(
         request_body["prompt_cache_key"].as_str(),
         Some(thread_id_string.as_str())
     );
-    assert_codex_client_metadata(
-        &request_body,
+    assert_no_codex_request_metadata_headers(
+        &request,
         installation_id.as_str(),
         session_id_string.as_str(),
         thread_id_string.as_str(),
@@ -1370,21 +1295,17 @@ async fn chatgpt_auth_sends_correct_request() {
         .expect("chatgpt-account-id header");
     let request_body = request.body_json();
 
-    let request_session_id = request.header("session-id").expect("session-id header");
-    let request_thread_id = request.header("thread-id").expect("thread-id header");
     let installation_id =
         std::fs::read_to_string(test.codex_home_path().join(INSTALLATION_ID_FILENAME))
             .expect("read installation id");
     let session_id_string = expected_session_id.to_string();
     let thread_id_string = expected_thread_id.to_string();
-    assert_eq!(request_session_id, session_id_string.as_str());
-    assert_eq!(request_thread_id, thread_id_string.as_str());
 
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Access Token");
     assert_eq!(request_chatgpt_account_id, "account_id");
-    assert_codex_client_metadata(
-        &request_body,
+    assert_no_codex_request_metadata_headers(
+        &request,
         installation_id.as_str(),
         session_id_string.as_str(),
         thread_id_string.as_str(),

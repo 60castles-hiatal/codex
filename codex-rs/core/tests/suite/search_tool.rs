@@ -650,18 +650,7 @@ async fn tool_search_returns_deferred_tools_without_follow_up_tool_injection() -
         "apps tools/call should include a positive turn_started_at_unix_ms: {apps_tool_call:?}"
     );
 
-    let first_request_turn_metadata: Value = serde_json::from_str(
-        &requests[0]
-            .header("x-codex-turn-metadata")
-            .expect("first response request should include turn metadata"),
-    )
-    .expect("first response request turn metadata should be valid JSON");
-    assert_eq!(
-        first_request_turn_metadata
-            .get("turn_started_at_unix_ms")
-            .and_then(Value::as_i64),
-        Some(mcp_turn_started_at_unix_ms)
-    );
+    assert_eq!(requests[0].header("x-codex-turn-metadata"), None);
 
     let first_request_tools = tool_names(&first_request_body);
     assert!(
