@@ -681,19 +681,21 @@ impl EarlyToolCallState {
     }
 
     pub(crate) fn observe_text_frame(&mut self, text: &str) -> Option<ResponseItem> {
-        if !(text.contains("response.output_item.added")
-            || text.contains("response.function_call_arguments.delta"))
+        if !(text.contains("response.output_item.")
+            || text.contains("response.function_call_arguments.")
+            || text.contains("response.custom_tool_call_input."))
         {
             return None;
         }
 
-        let event: EarlyFinalAnswerWireEvent = serde_json::from_str(text).ok()?;
+        let event: EarlyToolCallWireEvent = serde_json::from_str(text).ok()?;
         match event {
-            EarlyFinalAnswerWireEvent::OutputItemAdded { item } => {
+            EarlyToolCallWireEvent::OutputItemAdded { item } => {
                 self.observe_output_item(&item);
                 None
             }
-            EarlyFinalAnswerWireEvent::FunctionCallArgumentsDelta {
+            EarlyToolCallWireEvent::OutputItemDone { item } => self.observe_output_item_done(&item),
+            EarlyToolCallWireEvent::FunctionCallArgumentsDelta {
                 item_id,
                 call_id,
                 delta,
@@ -702,32 +704,107 @@ impl EarlyToolCallState {
                 call_id.as_deref(),
                 delta.as_deref(),
             ),
-            EarlyFinalAnswerWireEvent::OutputItemDone { .. }
-            | EarlyFinalAnswerWireEvent::FunctionCallArgumentsDone { .. } => None,
+            EarlyToolCallWireEvent::FunctionCallArgumentsDone {
+                item_id,
+                call_id,
+                arguments,
+            } => self.observe_function_call_arguments_done(
+                item_id.as_deref(),
+                call_id.as_deref(),
+                arguments.as_deref(),
+            ),
+            EarlyToolCallWireEvent::CustomToolCallInputDelta {
+                item_id,
+                call_id,
+                delta,
+            } => self.observe_custom_tool_call_input_delta(
+                item_id.as_deref(),
+                call_id.as_deref(),
+                delta.as_deref(),
+            ),
+            EarlyToolCallWireEvent::CustomToolCallInputDone {
+                item_id,
+                call_id,
+                input,
+            } => self.observe_custom_tool_call_input_done(
+                item_id.as_deref(),
+                call_id.as_deref(),
+                input.as_deref(),
+            ),
         }
     }
 
     fn observe_output_item(&mut self, item: &ResponseItem) {
-        let ResponseItem::FunctionCall {
-            id,
-            name,
-            namespace,
-            call_id,
-            ..
-        } = item
-        else {
-            return;
+        match item {
+            ResponseItem::FunctionCall {
+                id,
+                name,
+                namespace,
+                call_id,
+                ..
+            } => {
+                if namespace.is_none() && name == &self.final_answer_tool_name {
+                    return;
+                }
+                let key = id.as_ref().unwrap_or(call_id).clone();
+                if let Some(id) = id {
+                    self.item_keys_by_stream_id.insert(id.clone(), key.clone());
+                }
+                self.item_keys_by_stream_id
+                    .insert(call_id.clone(), key.clone());
+                self.items_by_key.insert(key, item.clone());
+            }
+            ResponseItem::CustomToolCall { id, call_id, .. } => {
+                let key = id.as_ref().unwrap_or(call_id).clone();
+                if let Some(id) = id {
+                    self.item_keys_by_stream_id.insert(id.clone(), key.clone());
+                }
+                self.item_keys_by_stream_id
+                    .insert(call_id.clone(), key.clone());
+                self.items_by_key.insert(key, item.clone());
+            }
+            ResponseItem::Message { .. }
+            | ResponseItem::AgentMessage { .. }
+            | ResponseItem::Reasoning { .. }
+            | ResponseItem::LocalShellCall { .. }
+            | ResponseItem::ToolSearchCall { .. }
+            | ResponseItem::FunctionCallOutput { .. }
+            | ResponseItem::CustomToolCallOutput { .. }
+            | ResponseItem::ToolSearchOutput { .. }
+            | ResponseItem::WebSearchCall { .. }
+            | ResponseItem::ImageGenerationCall { .. }
+            | ResponseItem::Compaction { .. }
+            | ResponseItem::CompactionTrigger { .. }
+            | ResponseItem::ContextCompaction { .. }
+            | ResponseItem::Other => {}
         };
-        if namespace.is_none() && name == &self.final_answer_tool_name {
-            return;
+    }
+
+    fn observe_output_item_done(&mut self, item: &ResponseItem) -> Option<ResponseItem> {
+        self.observe_output_item(item);
+        match item {
+            ResponseItem::FunctionCall {
+                name, namespace, ..
+            } if namespace.is_none() && name == &self.final_answer_tool_name => None,
+            ResponseItem::FunctionCall { .. } => Some(item.clone()),
+            ResponseItem::CustomToolCall { input, .. } => {
+                custom_tool_call_item_with_input(item, input.clone())
+            }
+            ResponseItem::Message { .. }
+            | ResponseItem::AgentMessage { .. }
+            | ResponseItem::Reasoning { .. }
+            | ResponseItem::LocalShellCall { .. }
+            | ResponseItem::ToolSearchCall { .. }
+            | ResponseItem::FunctionCallOutput { .. }
+            | ResponseItem::CustomToolCallOutput { .. }
+            | ResponseItem::ToolSearchOutput { .. }
+            | ResponseItem::WebSearchCall { .. }
+            | ResponseItem::ImageGenerationCall { .. }
+            | ResponseItem::Compaction { .. }
+            | ResponseItem::CompactionTrigger { .. }
+            | ResponseItem::ContextCompaction { .. }
+            | ResponseItem::Other => None,
         }
-        let key = id.as_ref().unwrap_or(call_id).clone();
-        if let Some(id) = id {
-            self.item_keys_by_stream_id.insert(id.clone(), key.clone());
-        }
-        self.item_keys_by_stream_id
-            .insert(call_id.clone(), key.clone());
-        self.items_by_key.insert(key, item.clone());
     }
 
     fn observe_function_call_arguments_delta(
@@ -745,6 +822,60 @@ impl EarlyToolCallState {
 
         let item = self.items_by_key.get(&item_key)?;
         function_call_item_with_arguments(item, arguments.clone())
+    }
+
+    fn observe_function_call_arguments_done(
+        &mut self,
+        item_id: Option<&str>,
+        call_id: Option<&str>,
+        arguments: Option<&str>,
+    ) -> Option<ResponseItem> {
+        let item_key = self.matching_item_key(item_id, call_id)?.to_string();
+        let item = self.items_by_key.get(&item_key)?;
+        function_call_item_with_arguments(item, arguments?.to_string())
+    }
+
+    fn observe_custom_tool_call_input_delta(
+        &mut self,
+        item_id: Option<&str>,
+        call_id: Option<&str>,
+        delta: Option<&str>,
+    ) -> Option<ResponseItem> {
+        let item_key = self
+            .matching_item_key(item_id, call_id)
+            .map(str::to_string)?;
+        let is_apply_patch = matches!(
+            self.items_by_key.get(&item_key),
+            Some(ResponseItem::CustomToolCall { name, .. }) if name == "apply_patch"
+        );
+        let input = self.argument_buffers.entry(item_key).or_default();
+        if let Some(delta) = delta {
+            input.push_str(delta);
+        }
+        if !is_apply_patch || !complete_apply_patch_input(input) {
+            return None;
+        }
+        let input = input.clone();
+
+        let item_key = self.matching_item_key(item_id, call_id)?;
+        let item = self.items_by_key.get(item_key)?;
+        completed_custom_tool_call_item_with_input(item, input)
+    }
+
+    fn observe_custom_tool_call_input_done(
+        &mut self,
+        item_id: Option<&str>,
+        call_id: Option<&str>,
+        input: Option<&str>,
+    ) -> Option<ResponseItem> {
+        let item_key = self.matching_item_key(item_id, call_id)?.to_string();
+        let input = input.map(ToString::to_string).or_else(|| {
+            self.argument_buffers
+                .get(&item_key)
+                .map(ToString::to_string)
+        })?;
+        let item = self.items_by_key.get(&item_key)?;
+        completed_custom_tool_call_item_with_input(item, input)
     }
 
     fn matching_item_key(&self, item_id: Option<&str>, call_id: Option<&str>) -> Option<&str> {
@@ -773,6 +904,39 @@ enum EarlyFinalAnswerWireEvent {
         item_id: Option<String>,
         call_id: Option<String>,
         arguments: Option<String>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum EarlyToolCallWireEvent {
+    #[serde(rename = "response.output_item.added")]
+    OutputItemAdded { item: ResponseItem },
+    #[serde(rename = "response.output_item.done")]
+    OutputItemDone { item: ResponseItem },
+    #[serde(rename = "response.function_call_arguments.delta")]
+    FunctionCallArgumentsDelta {
+        item_id: Option<String>,
+        call_id: Option<String>,
+        delta: Option<String>,
+    },
+    #[serde(rename = "response.function_call_arguments.done")]
+    FunctionCallArgumentsDone {
+        item_id: Option<String>,
+        call_id: Option<String>,
+        arguments: Option<String>,
+    },
+    #[serde(rename = "response.custom_tool_call_input.delta")]
+    CustomToolCallInputDelta {
+        item_id: Option<String>,
+        call_id: Option<String>,
+        delta: Option<String>,
+    },
+    #[serde(rename = "response.custom_tool_call_input.done")]
+    CustomToolCallInputDone {
+        item_id: Option<String>,
+        call_id: Option<String>,
+        input: Option<String>,
     },
 }
 
@@ -805,6 +969,60 @@ fn function_call_item_with_arguments(
         internal_chat_message_metadata_passthrough: internal_chat_message_metadata_passthrough
             .clone(),
     })
+}
+
+fn custom_tool_call_item_with_input(item: &ResponseItem, input: String) -> Option<ResponseItem> {
+    let ResponseItem::CustomToolCall {
+        id,
+        status,
+        call_id,
+        name,
+        internal_chat_message_metadata_passthrough,
+        ..
+    } = item
+    else {
+        return None;
+    };
+
+    Some(ResponseItem::CustomToolCall {
+        id: id.clone(),
+        status: status.clone(),
+        call_id: call_id.clone(),
+        name: name.clone(),
+        input,
+        internal_chat_message_metadata_passthrough: internal_chat_message_metadata_passthrough
+            .clone(),
+    })
+}
+
+fn completed_custom_tool_call_item_with_input(
+    item: &ResponseItem,
+    input: String,
+) -> Option<ResponseItem> {
+    let mut item = custom_tool_call_item_with_input(item, input)?;
+    if let ResponseItem::CustomToolCall { status, .. } = &mut item {
+        *status = Some("completed".to_string());
+    }
+    Some(item)
+}
+
+fn complete_apply_patch_input(input: &str) -> bool {
+    let input = input.trim_end_matches(char::is_whitespace);
+    let mut lines = input.lines();
+    if lines.next() != Some("*** Begin Patch") {
+        return false;
+    }
+
+    let mut saw_hunk = false;
+    let mut last_line = None;
+    for line in lines {
+        saw_hunk |= line.starts_with("*** Add File: ")
+            || line.starts_with("*** Delete File: ")
+            || line.starts_with("*** Update File: ");
+        last_line = Some(line);
+    }
+
+    saw_hunk && last_line == Some("*** End Patch")
 }
 
 fn response_item_from_value(value: Option<&Value>) -> Option<ResponseItem> {
@@ -1342,6 +1560,20 @@ mod tests {
         })
     }
 
+    fn custom_tool_added() -> serde_json::Value {
+        json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "custom_tool_call",
+                "id": "ctc-real",
+                "status": "in_progress",
+                "call_id": "call-real",
+                "name": "apply_patch",
+                "input": "",
+            }
+        })
+    }
+
     #[test]
     fn early_final_answer_observes_text_frame_arguments_delta() {
         let mut state = EarlyFinalAnswerState::new("final_answer".to_string());
@@ -1505,6 +1737,160 @@ mod tests {
                 namespace: None,
                 arguments: r#"{"status":"in_progress"}"#.to_string(),
                 call_id: "call-real".to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+    }
+
+    #[test]
+    fn early_tool_call_observes_custom_tool_input_done() {
+        let mut state = EarlyToolCallState::new("final_answer".to_string());
+
+        assert_eq!(
+            state.observe_text_frame(&custom_tool_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &json!({
+                    "type": "response.custom_tool_call_input.delta",
+                    "item_id": "ctc-real",
+                    "delta": "*** Begin Patch\n",
+                })
+                .to_string()
+            ),
+            None
+        );
+
+        let item = state
+            .observe_text_frame(
+                &json!({
+                    "type": "response.custom_tool_call_input.done",
+                    "item_id": "ctc-real",
+                    "input": "*** Begin Patch\n*** End Patch",
+                })
+                .to_string(),
+            )
+            .expect("complete custom input should produce a synthetic tool call");
+
+        assert_eq!(
+            item,
+            ResponseItem::CustomToolCall {
+                id: Some("ctc-real".to_string()),
+                status: Some("completed".to_string()),
+                call_id: "call-real".to_string(),
+                name: "apply_patch".to_string(),
+                input: "*** Begin Patch\n*** End Patch".to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+    }
+
+    #[test]
+    fn early_tool_call_observes_complete_apply_patch_input_delta() {
+        let mut state = EarlyToolCallState::new("final_answer".to_string());
+        let patch = "*** Begin Patch\n*** Add File: hello.txt\n+hello\n*** End Patch\n";
+
+        assert_eq!(
+            state.observe_text_frame(&custom_tool_added().to_string()),
+            None
+        );
+        let item = state
+            .observe_text_frame(
+                &json!({
+                    "type": "response.custom_tool_call_input.delta",
+                    "item_id": "ctc-real",
+                    "delta": patch,
+                })
+                .to_string(),
+            )
+            .expect("complete apply_patch input should produce a synthetic tool call");
+
+        assert_eq!(
+            item,
+            ResponseItem::CustomToolCall {
+                id: Some("ctc-real".to_string()),
+                status: Some("completed".to_string()),
+                call_id: "call-real".to_string(),
+                name: "apply_patch".to_string(),
+                input: patch.to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+    }
+
+    #[test]
+    fn early_tool_call_uses_custom_tool_delta_buffer_when_done_omits_input() {
+        let mut state = EarlyToolCallState::new("final_answer".to_string());
+
+        assert_eq!(
+            state.observe_text_frame(&custom_tool_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &json!({
+                    "type": "response.custom_tool_call_input.delta",
+                    "item_id": "ctc-real",
+                    "delta": "*** Begin Patch\n",
+                })
+                .to_string()
+            ),
+            None
+        );
+
+        let item = state
+            .observe_text_frame(
+                &json!({
+                    "type": "response.custom_tool_call_input.done",
+                    "call_id": "call-real",
+                })
+                .to_string(),
+            )
+            .expect("done should use buffered custom input");
+
+        assert_eq!(
+            item,
+            ResponseItem::CustomToolCall {
+                id: Some("ctc-real".to_string()),
+                status: Some("completed".to_string()),
+                call_id: "call-real".to_string(),
+                name: "apply_patch".to_string(),
+                input: "*** Begin Patch\n".to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+    }
+
+    #[test]
+    fn early_tool_call_uses_custom_tool_output_item_done_as_fallback() {
+        let mut state = EarlyToolCallState::new("final_answer".to_string());
+
+        let item = state
+            .observe_text_frame(
+                &json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "custom_tool_call",
+                        "id": "ctc-real",
+                        "status": "completed",
+                        "call_id": "call-real",
+                        "name": "apply_patch",
+                        "input": "*** Begin Patch\n*** End Patch",
+                    }
+                })
+                .to_string(),
+            )
+            .expect("done item should produce a synthetic custom tool call");
+
+        assert_eq!(
+            item,
+            ResponseItem::CustomToolCall {
+                id: Some("ctc-real".to_string()),
+                status: Some("completed".to_string()),
+                call_id: "call-real".to_string(),
+                name: "apply_patch".to_string(),
+                input: "*** Begin Patch\n*** End Patch".to_string(),
                 internal_chat_message_metadata_passthrough: None,
             }
         );
