@@ -8,20 +8,26 @@ use codex_tools::ResponsesApiTool;
 use codex_tools::ToolSpec;
 
 pub(crate) const FINAL_ANSWER_TOOL_NAME: &str = "final_answer";
+const FINAL_ANSWER_EXTRA_VALUE: &str = concat!(
+    "f6d79a07: This is the final answer, there are no more answers after this. ",
+    "All content should be included in the prior message. This field doesn't do much, and should probably be removed in the long term. This is just a generic field with a generic enum."
+);
+const FINAL_ANSWER_EXTRA_TRIGGER: &str = "\n\nf6d79a07:";
+const FINAL_ANSWER_EXTRA_TRIGGER_ESCAPED: &str = "\\n\\nf6d79a07:";
 
 pub(crate) fn final_answer_tool() -> ToolSpec {
     let properties = BTreeMap::from([(
         "answer".to_string(),
-        JsonSchema::string(Some(
-            "The exact final answer to show to the user. Only provide this when no further tool calls are needed."
-                .to_string(),
-        )),
+        JsonSchema::string(Some(format!(
+            "The exact final answer to show to the user, followed by exactly two newlines and then `{FINAL_ANSWER_EXTRA_VALUE}`. Only provide this when no further tool calls are needed."
+        ))),
     )]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: FINAL_ANSWER_TOOL_NAME.to_string(),
-        description: "Always call this to finish the turn. Call it only after all required non-final tools have already been called and their results have been received. Never call this in the same response as any other tool. The arguments must contain the exact final answer to show to the user."
-            .to_string(),
+        description: format!(
+            "Always call this to finish the turn. Call it only after all required non-final tools have already been called and their results have been received. Never call this in the same response as any other tool. Put the exact final answer in `answer`, then append exactly two newlines followed by `{FINAL_ANSWER_EXTRA_VALUE}`."
+        ),
         strict: true,
         defer_loading: None,
         parameters: JsonSchema::object(
@@ -117,9 +123,187 @@ impl EarlyHangupState {
 }
 
 fn final_answer_from_arguments(arguments: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(arguments).ok()?;
-    let answer = value.get("answer")?.as_str()?;
-    Some(answer.to_string())
+    json_string_field_prefix_before_marker(arguments, "answer")
+        .or_else(|| json_string_field(arguments, "answer").map(strip_final_answer_extra))
+}
+
+fn strip_final_answer_extra(answer: String) -> String {
+    answer
+        .find(FINAL_ANSWER_EXTRA_TRIGGER)
+        .map(|index| answer[..index].trim_end().to_string())
+        .unwrap_or(answer)
+}
+
+fn json_string_field_prefix_before_marker(input: &str, field_name: &str) -> Option<String> {
+    let value_start = json_string_field_value_start(input, field_name)?;
+    json_string_prefix_before_marker(input, value_start)
+}
+
+fn json_string_field(input: &str, field_name: &str) -> Option<String> {
+    let value_start = json_string_field_value_start(input, field_name)?;
+    let value_end = json_string_end(input, value_start)?;
+    serde_json::from_str(&input[value_start..value_end]).ok()
+}
+
+fn json_string_field_value_start(input: &str, field_name: &str) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut cursor = skip_json_whitespace(bytes, 0);
+    if bytes.get(cursor) != Some(&b'{') {
+        return None;
+    }
+    cursor += 1;
+
+    loop {
+        cursor = skip_json_whitespace(bytes, cursor);
+        match bytes.get(cursor) {
+            Some(b'}') | None => return None,
+            Some(b'"') => {}
+            _ => return None,
+        }
+
+        let key_end = json_string_end(input, cursor)?;
+        let key: String = serde_json::from_str(&input[cursor..key_end]).ok()?;
+        cursor = skip_json_whitespace(bytes, key_end);
+        if bytes.get(cursor) != Some(&b':') {
+            return None;
+        }
+        cursor = skip_json_whitespace(bytes, cursor + 1);
+
+        if key == field_name {
+            if bytes.get(cursor) != Some(&b'"') {
+                return None;
+            }
+            return Some(cursor);
+        }
+
+        cursor = json_value_end(input, cursor)?;
+        cursor = skip_json_whitespace(bytes, cursor);
+        match bytes.get(cursor) {
+            Some(b',') => cursor += 1,
+            _ => return None,
+        }
+    }
+}
+
+fn json_string_prefix_before_marker(input: &str, value_start: usize) -> Option<String> {
+    let bytes = input.as_bytes();
+    if bytes.get(value_start) != Some(&b'"') {
+        return None;
+    }
+
+    let search_start = value_start + 1;
+    let search_end = json_string_end(input, value_start)
+        .map(|end| end.saturating_sub(1))
+        .unwrap_or(input.len());
+    let value_tail = input.get(search_start..search_end)?;
+    let marker_index = [
+        FINAL_ANSWER_EXTRA_TRIGGER_ESCAPED,
+        FINAL_ANSWER_EXTRA_TRIGGER,
+    ]
+    .iter()
+    .filter_map(|marker| value_tail.find(marker))
+    .min()?;
+    let raw_answer = &input[value_start..search_start + marker_index];
+    let candidate = format!("{raw_answer}\"");
+    serde_json::from_str::<String>(&candidate)
+        .ok()
+        .map(|answer| answer.trim_end().to_string())
+}
+
+fn skip_json_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
+    while matches!(bytes.get(cursor), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn json_string_end(input: &str, start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.get(start) != Some(&b'"') {
+        return None;
+    }
+
+    let mut cursor = start + 1;
+    let mut escaped = false;
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        if escaped {
+            escaped = false;
+            cursor += 1;
+            continue;
+        }
+
+        match byte {
+            b'\\' => {
+                escaped = true;
+                cursor += 1;
+            }
+            b'"' => return Some(cursor + 1),
+            _ => cursor += 1,
+        }
+    }
+
+    None
+}
+
+fn json_value_end(input: &str, start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    match bytes.get(start)? {
+        b'"' => json_string_end(input, start),
+        b'{' => json_container_end(input, start, b'{', b'}'),
+        b'[' => json_container_end(input, start, b'[', b']'),
+        b't' if input[start..].starts_with("true") => Some(start + 4),
+        b'f' if input[start..].starts_with("false") => Some(start + 5),
+        b'n' if input[start..].starts_with("null") => Some(start + 4),
+        b'-' | b'0'..=b'9' => Some(json_number_end(bytes, start)),
+        _ => None,
+    }
+}
+
+fn json_container_end(input: &str, start: usize, open: u8, close: u8) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.get(start) != Some(&open) {
+        return None;
+    }
+
+    let mut stack = vec![close];
+    let mut cursor = start + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'"' => cursor = json_string_end(input, cursor)?,
+            b'{' => {
+                stack.push(b'}');
+                cursor += 1;
+            }
+            b'[' => {
+                stack.push(b']');
+                cursor += 1;
+            }
+            b'}' | b']' => {
+                if stack.pop() != Some(bytes[cursor]) {
+                    return None;
+                }
+                cursor += 1;
+                if stack.is_empty() {
+                    return Some(cursor);
+                }
+            }
+            _ => cursor += 1,
+        }
+    }
+
+    None
+}
+
+fn json_number_end(bytes: &[u8], start: usize) -> usize {
+    let mut cursor = start;
+    while !matches!(
+        bytes.get(cursor),
+        None | Some(b' ' | b'\n' | b'\r' | b'\t' | b',' | b'}' | b']')
+    ) {
+        cursor += 1;
+    }
+    cursor
 }
 
 #[cfg(test)]
@@ -138,6 +322,34 @@ mod tests {
     }
 
     #[test]
+    fn final_answer_tool_requires_answer_with_fixed_trailing_marker() {
+        let ToolSpec::Function(tool) = final_answer_tool() else {
+            panic!("final_answer should be a function tool");
+        };
+        assert!(tool.description.contains(FINAL_ANSWER_EXTRA_VALUE));
+        let parameters = tool.parameters;
+        assert_eq!(parameters.required, Some(vec!["answer".to_string()]));
+        assert_eq!(
+            parameters
+                .properties
+                .as_ref()
+                .map(|properties| properties.contains_key("extra")),
+            Some(false)
+        );
+        let answer = parameters
+            .properties
+            .as_ref()
+            .and_then(|properties| properties.get("answer"))
+            .expect("answer schema should be present");
+        assert!(
+            answer
+                .description
+                .as_deref()
+                .is_some_and(|description| description.contains(FINAL_ANSWER_EXTRA_VALUE))
+        );
+    }
+
+    #[test]
     fn parses_final_answer_from_incremental_arguments() {
         let mut state = EarlyHangupState::default();
         state.observe_output_item(&final_answer_item());
@@ -147,8 +359,31 @@ mod tests {
             None
         );
         assert_eq!(
-            state.observe_function_call_arguments_delta("fc-final", r#""}"#),
+            state.observe_function_call_arguments_delta(
+                "fc-final",
+                r#"\n\nf6d79a07: This is the final answer, there are no more answers after this. All content should be included"#
+            ),
             Some("done".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_final_answer_before_arguments_object_is_complete() {
+        assert_eq!(
+            final_answer_from_arguments(
+                r#"{"answer":"done\n\nf6d79a07: This is the final answer, there are no more answers after this. All content should be included"#
+            ),
+            Some("done".to_string())
+        );
+    }
+
+    #[test]
+    fn parses_escaped_final_answer_before_extra_is_complete() {
+        assert_eq!(
+            final_answer_from_arguments(
+                r#"{"answer":"line\n\"quoted\"\n\nf6d79a07: This is the final answer"#
+            ),
+            Some("line\n\"quoted\"".to_string())
         );
     }
 

@@ -377,6 +377,51 @@ async fn dropped_response_stream_traces_cancelled_partial_output() -> anyhow::Re
 }
 
 #[tokio::test]
+async fn early_tool_call_traces_cancelled_without_last_response() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let attempt = started_inference_attempt(&temp)?;
+    let item = ResponseItem::FunctionCall {
+        id: Some("fc-real".to_string()),
+        name: "update_goal".to_string(),
+        namespace: None,
+        arguments: r#"{"status":"in_progress"}"#.to_string(),
+        call_id: "call-real".to_string(),
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let api_stream = futures::stream::iter([Ok(ResponseEvent::EarlyToolCall(item.clone()))]);
+    let (mut stream, last_response) = super::map_response_events(
+        /*upstream_request_id*/ None,
+        api_stream,
+        test_session_telemetry(),
+        attempt,
+        test_model_provider(),
+    );
+
+    let observed = stream
+        .next()
+        .await
+        .expect("mapped stream should yield early tool call")?;
+    let ResponseEvent::EarlyToolCall(observed_item) = observed else {
+        panic!("expected early tool call event: {observed:?}");
+    };
+    assert_eq!(observed_item, item);
+    assert!(stream.next().await.is_none());
+    assert!(last_response.await.is_err());
+
+    let rollout = replay_until_cancelled(&temp).await?;
+    let inference = rollout
+        .inference_calls
+        .values()
+        .next()
+        .expect("inference should be reduced");
+
+    assert_eq!(inference.execution.status, ExecutionStatus::Cancelled);
+    assert_eq!(inference.response_item_ids.len(), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn response_stream_records_last_model_feedback_ids() {
     let tags = Arc::new(Mutex::new(BTreeMap::new()));
     let _guard = tracing_subscriber::registry()

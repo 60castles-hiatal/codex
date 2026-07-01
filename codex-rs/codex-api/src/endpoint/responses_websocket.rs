@@ -8,11 +8,13 @@ use crate::provider::Provider;
 use crate::rate_limits::parse_rate_limit_event;
 use crate::safety_buffering::treatment_from_headers;
 use crate::sse::EarlyFinalAnswerState;
+use crate::sse::EarlyToolCallState;
 use crate::sse::ResponsesStreamEvent;
 use crate::sse::process_responses_event;
 use crate::telemetry::WebsocketTelemetry;
 use codex_client::TransportError;
 use codex_client::maybe_build_rustls_client_config_with_custom_ca;
+use codex_protocol::models::ResponseItem;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use futures::SinkExt;
 use futures::StreamExt;
@@ -23,6 +25,7 @@ use http::StatusCode;
 use serde::Deserialize;
 use serde_json::Value;
 use serde_json::map::Map as JsonMap;
+use socket2::SockRef;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -52,26 +55,42 @@ use url::Url;
 
 struct WsStream {
     tx_command: mpsc::Sender<WsCommand>,
-    rx_message: mpsc::UnboundedReceiver<Result<Message, WsError>>,
+    rx_message: mpsc::UnboundedReceiver<Result<WsPumpEvent, WsError>>,
     pump_task: tokio::task::JoinHandle<()>,
+}
+
+enum WsPumpEvent {
+    Message(Message),
+    EarlyFinalAnswer(String),
+    EarlyToolCall(ResponseItem),
 }
 
 enum WsCommand {
     Send {
         message: Message,
         early_final_answer_tool_name: Option<String>,
+        early_tool_call_hangup_enabled: bool,
         tx_result: oneshot::Sender<Result<(), WsError>>,
     },
+}
+
+fn reset_tcp_on_drop(stream: &WebSocketStream<MaybeTlsStream<TcpStream>>) {
+    let tcp_stream = stream.get_ref().get_ref();
+    let socket = SockRef::from(tcp_stream);
+    if let Err(err) = socket.set_linger(Some(Duration::ZERO)) {
+        debug!("failed to configure websocket TCP RST close: {err}");
+    }
 }
 
 impl WsStream {
     fn new(inner: WebSocketStream<MaybeTlsStream<TcpStream>>) -> Self {
         let (tx_command, mut rx_command) = mpsc::channel::<WsCommand>(32);
-        let (tx_message, rx_message) = mpsc::unbounded_channel::<Result<Message, WsError>>();
+        let (tx_message, rx_message) = mpsc::unbounded_channel::<Result<WsPumpEvent, WsError>>();
 
         let pump_task = tokio::spawn(async move {
             let mut inner = inner;
             let mut early_final_answer_state: Option<EarlyFinalAnswerState> = None;
+            let mut early_tool_call_state: Option<EarlyToolCallState> = None;
             loop {
                 tokio::select! {
                     command = rx_command.recv() => {
@@ -82,10 +101,19 @@ impl WsStream {
                             WsCommand::Send {
                                 message,
                                 early_final_answer_tool_name,
+                                early_tool_call_hangup_enabled,
                                 tx_result,
                             } => {
-                                early_final_answer_state =
-                                    early_final_answer_tool_name.map(EarlyFinalAnswerState::new);
+                                early_final_answer_state = early_final_answer_tool_name
+                                    .clone()
+                                    .map(EarlyFinalAnswerState::new);
+                                early_tool_call_state =
+                                    if early_tool_call_hangup_enabled {
+                                        early_final_answer_tool_name
+                                            .map(EarlyToolCallState::new)
+                                    } else {
+                                        None
+                                    };
                                 let result = inner.send(message).await;
                                 let should_break = result.is_err();
                                 let _ = tx_result.send(result);
@@ -112,21 +140,29 @@ impl WsStream {
                             | Message::Close(_)
                             | Message::Frame(_))) => {
                                 if let Message::Text(text) = &message
-                                    && let Some(state) = early_final_answer_state.as_mut()
-                                    && let Ok(event) =
-                                        serde_json::from_str::<ResponsesStreamEvent>(text)
-                                    && let Some(answer) = state.observe_event(&event)
+                                    && let Some(item) = early_tool_call_state
+                                        .as_mut()
+                                        .and_then(|state| state.observe_text_frame(text))
                                 {
-                                    let event = serde_json::json!({
-                                        "type": "codex.early_final_answer",
-                                        "answer": answer,
-                                    });
+                                    reset_tcp_on_drop(&inner);
+                                    drop(inner);
                                     let _ = tx_message
-                                        .send(Ok(Message::Text(event.to_string().into())));
-                                    break;
+                                        .send(Ok(WsPumpEvent::EarlyToolCall(item)));
+                                    return;
+                                }
+                                if let Message::Text(text) = &message
+                                    && let Some(answer) = early_final_answer_state
+                                        .as_mut()
+                                        .and_then(|state| state.observe_text_frame(text))
+                                {
+                                    reset_tcp_on_drop(&inner);
+                                    drop(inner);
+                                    let _ = tx_message
+                                        .send(Ok(WsPumpEvent::EarlyFinalAnswer(answer)));
+                                    return;
                                 }
                                 let is_close = matches!(message, Message::Close(_));
-                                if tx_message.send(Ok(message)).is_err() {
+                                if tx_message.send(Ok(WsPumpEvent::Message(message))).is_err() {
                                     break;
                                 }
                                 if is_close {
@@ -165,16 +201,18 @@ impl WsStream {
         &self,
         message: Message,
         early_final_answer_tool_name: Option<String>,
+        early_tool_call_hangup_enabled: bool,
     ) -> Result<(), WsError> {
         self.request(|tx_result| WsCommand::Send {
             message,
             early_final_answer_tool_name,
+            early_tool_call_hangup_enabled,
             tx_result,
         })
         .await
     }
 
-    async fn next(&mut self) -> Option<Result<Message, WsError>> {
+    async fn next(&mut self) -> Option<Result<WsPumpEvent, WsError>> {
         self.rx_message.recv().await
     }
 }
@@ -436,7 +474,10 @@ impl ResponsesWebsocketClient {
             .map_err(|err| {
                 ApiError::Stream(format!("failed to read websocket probe event: {err}"))
             })?
-            .and_then(immediate_close_from_message);
+            .and_then(|event| match event {
+                WsPumpEvent::Message(message) => immediate_close_from_message(message),
+                WsPumpEvent::EarlyFinalAnswer(_) | WsPumpEvent::EarlyToolCall(_) => None,
+            });
 
         Ok(ResponsesWebsocketProbe {
             url: ws_url.to_string(),
@@ -716,7 +757,7 @@ async fn run_websocket_response_stream(
             .await
             .map_err(|_| ApiError::Stream("idle timeout waiting for websocket".into()));
         if let Some(t) = telemetry.as_ref() {
-            t.on_ws_event(&response, poll_start.elapsed());
+            record_ws_pump_telemetry(t, &response, poll_start.elapsed());
         }
         let message = match response {
             Ok(Some(Ok(msg))) => msg,
@@ -734,112 +775,152 @@ async fn run_websocket_response_stream(
         };
 
         match message {
-            Message::Text(text) => {
-                if let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text)
-                    && let Some(error) =
-                        map_wrapped_websocket_error_event(wrapped_error, text.to_string())
-                {
-                    return Err(error);
-                }
+            WsPumpEvent::EarlyFinalAnswer(answer) => {
+                let _ = tx_event
+                    .send(Ok(ResponseEvent::EarlyFinalAnswer(answer)))
+                    .await;
+                return Ok(WebsocketResponseStreamEnd::ClosedEarly);
+            }
+            WsPumpEvent::EarlyToolCall(item) => {
+                let _ = tx_event.send(Ok(ResponseEvent::EarlyToolCall(item))).await;
+                return Ok(WebsocketResponseStreamEnd::ClosedEarly);
+            }
+            WsPumpEvent::Message(message) => match message {
+                Message::Text(text) => {
+                    if let Some(wrapped_error) = parse_wrapped_websocket_error_event(&text)
+                        && let Some(error) =
+                            map_wrapped_websocket_error_event(wrapped_error, text.to_string())
+                    {
+                        return Err(error);
+                    }
 
-                let event = match serde_json::from_str::<ResponsesStreamEvent>(&text) {
-                    Ok(event) => event,
-                    Err(err) => {
-                        debug!("failed to parse websocket event: {err}, data: {text}");
+                    let event = match serde_json::from_str::<ResponsesStreamEvent>(&text) {
+                        Ok(event) => event,
+                        Err(err) => {
+                            debug!("failed to parse websocket event: {err}, data: {text}");
+                            continue;
+                        }
+                    };
+                    if let Some(response_turn_state) = event.turn_state()
+                        && let Some(turn_state) = turn_state
+                    {
+                        let _ = turn_state.set(response_turn_state);
+                    }
+                    if let Some(headers) = event.headers.as_ref().and_then(Value::as_object)
+                        && let Some(treatment) =
+                            treatment_from_headers(&json_headers_to_http_headers(headers))
+                    {
+                        safety_buffering_treatment = treatment;
+                    }
+                    let model_verifications = event.model_verifications();
+                    let turn_moderation_metadata = event.turn_moderation_metadata();
+                    let safety_buffering = event
+                        .safety_buffering()
+                        .map(|buffering| buffering.with_treatment(&safety_buffering_treatment));
+                    if event.kind() == "codex.rate_limits" {
+                        if let Some(snapshot) = parse_rate_limit_event(&text) {
+                            let _ = tx_event.send(Ok(ResponseEvent::RateLimits(snapshot))).await;
+                        }
                         continue;
                     }
-                };
-                if let Some(response_turn_state) = event.turn_state()
-                    && let Some(turn_state) = turn_state
-                {
-                    let _ = turn_state.set(response_turn_state);
-                }
-                if let Some(headers) = event.headers.as_ref().and_then(Value::as_object)
-                    && let Some(treatment) =
-                        treatment_from_headers(&json_headers_to_http_headers(headers))
-                {
-                    safety_buffering_treatment = treatment;
-                }
-                let model_verifications = event.model_verifications();
-                let turn_moderation_metadata = event.turn_moderation_metadata();
-                let safety_buffering = event
-                    .safety_buffering()
-                    .map(|buffering| buffering.with_treatment(&safety_buffering_treatment));
-                if event.kind() == "codex.rate_limits" {
-                    if let Some(snapshot) = parse_rate_limit_event(&text) {
-                        let _ = tx_event.send(Ok(ResponseEvent::RateLimits(snapshot))).await;
+                    if let Some(model) = event.response_model()
+                        && last_server_model.as_deref() != Some(model.as_str())
+                    {
+                        let _ = tx_event
+                            .send(Ok(ResponseEvent::ServerModel(model.clone())))
+                            .await;
+                        last_server_model = Some(model);
                     }
-                    continue;
-                }
-                if let Some(model) = event.response_model()
-                    && last_server_model.as_deref() != Some(model.as_str())
-                {
-                    let _ = tx_event
-                        .send(Ok(ResponseEvent::ServerModel(model.clone())))
-                        .await;
-                    last_server_model = Some(model);
-                }
-                if let Some(verifications) = model_verifications
-                    && tx_event
-                        .send(Ok(ResponseEvent::ModelVerifications(verifications)))
-                        .await
-                        .is_err()
-                {
-                    return Err(ApiError::Stream(
-                        "response event consumer dropped".to_string(),
-                    ));
-                }
-                if let Some(metadata) = turn_moderation_metadata
-                    && tx_event
-                        .send(Ok(ResponseEvent::TurnModerationMetadata(metadata)))
-                        .await
-                        .is_err()
-                {
-                    return Err(ApiError::Stream(
-                        "response event consumer dropped".to_string(),
-                    ));
-                }
-                if let Some(buffering) = safety_buffering
-                    && tx_event
-                        .send(Ok(ResponseEvent::SafetyBuffering(buffering)))
-                        .await
-                        .is_err()
-                {
-                    return Err(ApiError::Stream(
-                        "response event consumer dropped".to_string(),
-                    ));
-                }
-                match process_responses_event(event) {
-                    Ok(Some(event)) => {
-                        let is_completed = matches!(event, ResponseEvent::Completed { .. });
-                        let is_early_final_answer =
-                            matches!(event, ResponseEvent::EarlyFinalAnswer(_));
-                        let _ = tx_event.send(Ok(event)).await;
-                        if is_completed {
-                            return Ok(WebsocketResponseStreamEnd::Completed);
+                    if let Some(verifications) = model_verifications
+                        && tx_event
+                            .send(Ok(ResponseEvent::ModelVerifications(verifications)))
+                            .await
+                            .is_err()
+                    {
+                        return Err(ApiError::Stream(
+                            "response event consumer dropped".to_string(),
+                        ));
+                    }
+                    if let Some(metadata) = turn_moderation_metadata
+                        && tx_event
+                            .send(Ok(ResponseEvent::TurnModerationMetadata(metadata)))
+                            .await
+                            .is_err()
+                    {
+                        return Err(ApiError::Stream(
+                            "response event consumer dropped".to_string(),
+                        ));
+                    }
+                    if let Some(buffering) = safety_buffering
+                        && tx_event
+                            .send(Ok(ResponseEvent::SafetyBuffering(buffering)))
+                            .await
+                            .is_err()
+                    {
+                        return Err(ApiError::Stream(
+                            "response event consumer dropped".to_string(),
+                        ));
+                    }
+                    match process_responses_event(event) {
+                        Ok(Some(event)) => {
+                            let is_completed = matches!(event, ResponseEvent::Completed { .. });
+                            let is_early_final_answer =
+                                matches!(event, ResponseEvent::EarlyFinalAnswer(_));
+                            let _ = tx_event.send(Ok(event)).await;
+                            if is_completed {
+                                return Ok(WebsocketResponseStreamEnd::Completed);
+                            }
+                            if is_early_final_answer {
+                                return Ok(WebsocketResponseStreamEnd::ClosedEarly);
+                            }
                         }
-                        if is_early_final_answer {
-                            return Ok(WebsocketResponseStreamEnd::ClosedEarly);
+                        Ok(None) => {}
+                        Err(error) => {
+                            return Err(error.into_api_error());
                         }
                     }
-                    Ok(None) => {}
-                    Err(error) => {
-                        return Err(error.into_api_error());
-                    }
                 }
-            }
-            Message::Binary(_) => {
-                return Err(ApiError::Stream("unexpected binary websocket event".into()));
-            }
-            Message::Close(_) => {
-                return Err(ApiError::Stream(
-                    "websocket closed by server before response.completed".into(),
-                ));
-            }
-            Message::Frame(_) => {}
-            Message::Ping(_) | Message::Pong(_) => {}
+                Message::Binary(_) => {
+                    return Err(ApiError::Stream("unexpected binary websocket event".into()));
+                }
+                Message::Close(_) => {
+                    return Err(ApiError::Stream(
+                        "websocket closed by server before response.completed".into(),
+                    ));
+                }
+                Message::Frame(_) => {}
+                Message::Ping(_) | Message::Pong(_) => {}
+            },
         }
     }
+}
+
+fn record_ws_pump_telemetry(
+    telemetry: &Arc<dyn WebsocketTelemetry>,
+    response: &Result<Option<Result<WsPumpEvent, WsError>>, ApiError>,
+    duration: Duration,
+) {
+    let message = match response {
+        Ok(Some(Ok(WsPumpEvent::Message(message)))) => Ok(Some(Ok(message.clone()))),
+        Ok(Some(Ok(WsPumpEvent::EarlyFinalAnswer(answer)))) => {
+            let event = serde_json::json!({
+                "type": "codex.early_final_answer",
+                "answer": answer,
+            });
+            Ok(Some(Ok(Message::Text(event.to_string().into()))))
+        }
+        Ok(Some(Ok(WsPumpEvent::EarlyToolCall(item)))) => {
+            let event = serde_json::json!({
+                "type": "codex.early_tool_call",
+                "item": item,
+            });
+            Ok(Some(Ok(Message::Text(event.to_string().into()))))
+        }
+        Ok(Some(Err(_))) => Err(ApiError::Stream("websocket error".to_string())),
+        Ok(None) => Ok(None),
+        Err(err) => Err(ApiError::Stream(err.to_string())),
+    };
+    telemetry.on_ws_event(&message, duration);
 }
 
 async fn send_websocket_request(
@@ -851,6 +932,8 @@ async fn send_websocket_request(
     early_final_answer_tool_name: Option<String>,
 ) -> Result<(), ApiError> {
     trace!("websocket request: {request_text}");
+    let early_tool_call_hangup_enabled =
+        early_final_answer_tool_name.is_some() && request_uses_serial_tool_calls(&request_text);
 
     let request_start = Instant::now();
     let result = tokio::time::timeout(
@@ -858,6 +941,7 @@ async fn send_websocket_request(
         ws_stream.send(
             Message::Text(request_text.into()),
             early_final_answer_tool_name,
+            early_tool_call_hangup_enabled,
         ),
     )
     .await
@@ -879,6 +963,13 @@ async fn send_websocket_request(
     Ok(())
 }
 
+fn request_uses_serial_tool_calls(request_text: &str) -> bool {
+    serde_json::from_str::<Value>(request_text)
+        .ok()
+        .and_then(|request| request.get("parallel_tool_calls").and_then(Value::as_bool))
+        == Some(false)
+}
+
 fn serialize_websocket_request(request: &ResponsesWsRequest) -> Result<String, ApiError> {
     serde_json::to_string(request)
         .map_err(|err| ApiError::Stream(format!("failed to encode websocket request: {err}")))
@@ -894,6 +985,8 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde_json::json;
     use std::collections::HashMap;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::accept_async_with_config;
 
     #[test]
     fn direct_serialization_preserves_websocket_request_payload() {
@@ -976,6 +1069,268 @@ mod tests {
     fn websocket_config_enables_permessage_deflate() {
         let config = websocket_config();
         assert!(config.extensions.permessage_deflate.is_some());
+    }
+
+    #[test]
+    fn request_uses_serial_tool_calls_requires_false_parallel_flag() {
+        assert!(request_uses_serial_tool_calls(
+            &json!({
+                "type": "response.create",
+                "parallel_tool_calls": false,
+            })
+            .to_string()
+        ));
+        assert!(!request_uses_serial_tool_calls(
+            &json!({
+                "type": "response.create",
+                "parallel_tool_calls": true,
+            })
+            .to_string()
+        ));
+        assert!(!request_uses_serial_tool_calls(
+            &json!({
+                "type": "response.create",
+            })
+            .to_string()
+        ));
+    }
+
+    #[tokio::test]
+    async fn websocket_early_final_answer_resets_connection_before_completed() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test websocket listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("test websocket listener should have a local address");
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("test websocket connection should be accepted");
+            let mut ws = accept_async_with_config(stream, Some(websocket_config()))
+                .await
+                .expect("test websocket handshake should complete");
+            let _request = ws
+                .next()
+                .await
+                .expect("request frame should arrive")
+                .expect("request frame should be valid");
+
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc-final",
+                        "name": "final_answer",
+                        "arguments": "",
+                        "call_id": "call-final"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send final_answer added");
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc-final",
+                    "call_id": "call-final",
+                    "delta": r#"{"answer":"done\n\nf6d79a07: This is the final answer, there are no more answers after this. All content should be included"#
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send final_answer arguments");
+
+            let close = tokio::time::timeout(Duration::from_secs(1), ws.next())
+                .await
+                .expect("client should close promptly after final_answer arguments");
+            assert!(
+                matches!(close, None | Some(Err(_))),
+                "client should drop the TCP connection without a websocket close frame: {close:?}"
+            );
+        });
+
+        let (mut ws_stream, _, _, _, _) = connect_websocket(
+            Url::parse(&format!("ws://{addr}/responses")).expect("valid websocket url"),
+            HeaderMap::new(),
+            /*turn_state*/ None,
+        )
+        .await
+        .expect("connect websocket");
+        let (tx_event, mut rx_event) = mpsc::channel(16);
+
+        let result = run_websocket_response_stream(
+            json!({"type": "response.create"}).to_string(),
+            WebsocketResponseStreamOptions {
+                ws_stream: &mut ws_stream,
+                tx_event,
+                idle_timeout: Duration::from_secs(5),
+                telemetry: None,
+                connection_reused: false,
+                turn_state: None,
+                early_final_answer_tool_name: Some("final_answer".to_string()),
+            },
+        )
+        .await
+        .expect("websocket response stream should finish early");
+
+        assert_eq!(result, WebsocketResponseStreamEnd::ClosedEarly);
+        assert!(matches!(
+            rx_event.recv().await.expect("output item added event"),
+            Ok(ResponseEvent::OutputItemAdded(_))
+        ));
+        assert!(matches!(
+            rx_event.recv().await.expect("early final answer event"),
+            Ok(ResponseEvent::EarlyFinalAnswer(answer)) if answer == "done"
+        ));
+        assert!(rx_event.try_recv().is_err());
+        server.await.expect("server should finish");
+    }
+
+    #[tokio::test]
+    async fn websocket_early_tool_call_resets_connection_when_arguments_parse() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test websocket listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("test websocket listener should have a local address");
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("test websocket connection should be accepted");
+            let mut ws = accept_async_with_config(stream, Some(websocket_config()))
+                .await
+                .expect("test websocket handshake should complete");
+            let _request = ws
+                .next()
+                .await
+                .expect("request frame should arrive")
+                .expect("request frame should be valid");
+
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc-real",
+                        "name": "update_goal",
+                        "arguments": "",
+                        "call_id": "call-real"
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send tool call added");
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc-real",
+                    "call_id": "call-real",
+                    "delta": r#"{"status":"in_progress""#,
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send partial tool call arguments");
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc-real",
+                    "call_id": "call-real",
+                    "delta": "}",
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send complete tool call arguments");
+
+            let close = tokio::time::timeout(Duration::from_secs(1), ws.next())
+                .await
+                .expect("client should close promptly after complete tool call arguments");
+            assert!(
+                matches!(close, None | Some(Err(_))),
+                "client should drop the TCP connection without a websocket close frame: {close:?}"
+            );
+        });
+
+        let (mut ws_stream, _, _, _, _) = connect_websocket(
+            Url::parse(&format!("ws://{addr}/responses")).expect("valid websocket url"),
+            HeaderMap::new(),
+            /*turn_state*/ None,
+        )
+        .await
+        .expect("connect websocket");
+        let (tx_event, mut rx_event) = mpsc::channel(16);
+
+        let result = run_websocket_response_stream(
+            json!({
+                "type": "response.create",
+                "parallel_tool_calls": false,
+            })
+            .to_string(),
+            WebsocketResponseStreamOptions {
+                ws_stream: &mut ws_stream,
+                tx_event,
+                idle_timeout: Duration::from_secs(5),
+                telemetry: None,
+                connection_reused: false,
+                turn_state: None,
+                early_final_answer_tool_name: Some("final_answer".to_string()),
+            },
+        )
+        .await
+        .expect("websocket response stream should finish early");
+
+        assert_eq!(result, WebsocketResponseStreamEnd::ClosedEarly);
+        assert!(matches!(
+            rx_event.recv().await.expect("output item added event"),
+            Ok(ResponseEvent::OutputItemAdded(ResponseItem::FunctionCall { name, .. }))
+                if name == "update_goal"
+        ));
+        assert!(matches!(
+            rx_event.recv().await.expect("partial tool arguments event"),
+            Ok(ResponseEvent::ToolCallInputDelta {
+                item_id,
+                call_id: Some(call_id),
+                delta,
+            }) if item_id == "fc-real"
+                && call_id == "call-real"
+                && delta == r#"{"status":"in_progress""#
+        ));
+        let early_tool_call = rx_event
+            .recv()
+            .await
+            .expect("early tool call event")
+            .expect("early tool call should be ok");
+        let ResponseEvent::EarlyToolCall(item) = early_tool_call else {
+            panic!("expected early tool call event: {early_tool_call:?}");
+        };
+        assert_eq!(
+            item,
+            ResponseItem::FunctionCall {
+                id: Some("fc-real".to_string()),
+                name: "update_goal".to_string(),
+                namespace: None,
+                arguments: r#"{"status":"in_progress"}"#.to_string(),
+                call_id: "call-real".to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+        assert!(rx_event.try_recv().is_err());
+        server.await.expect("server should finish");
     }
 
     #[test]

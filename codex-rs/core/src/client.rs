@@ -1869,6 +1869,16 @@ where
                         .await;
                     return;
                 }
+                Ok(ResponseEvent::EarlyToolCall(item)) => {
+                    items_added.push(item.clone());
+                    inference_trace_attempt.record_cancelled(
+                        "response stream closed after tool call arguments",
+                        upstream_request_id,
+                        &items_added,
+                    );
+                    let _ = tx_event.send(Ok(ResponseEvent::EarlyToolCall(item))).await;
+                    return;
+                }
                 Ok(event) => {
                     if tx_event.send(Ok(event)).await.is_err() {
                         inference_trace_attempt.record_cancelled(
