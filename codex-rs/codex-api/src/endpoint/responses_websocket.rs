@@ -1333,6 +1333,181 @@ mod tests {
         server.await.expect("server should finish");
     }
 
+    #[tokio::test]
+    async fn websocket_early_tool_call_resets_connection_when_custom_apply_patch_completes() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test websocket listener should bind");
+        let addr = listener
+            .local_addr()
+            .expect("test websocket listener should have a local address");
+        let partial_patch = "*** Begin Patch\n*** Add File: hello.txt\n+hello\n*** End Pat";
+        let final_delta = "ch\n";
+        let patch = format!("{partial_patch}{final_delta}");
+        let server_patch = patch.clone();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener
+                .accept()
+                .await
+                .expect("test websocket connection should be accepted");
+            let mut ws = accept_async_with_config(stream, Some(websocket_config()))
+                .await
+                .expect("test websocket handshake should complete");
+            let _request = ws
+                .next()
+                .await
+                .expect("request frame should arrive")
+                .expect("request frame should be valid");
+
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "custom_tool_call",
+                        "id": "ctc-real",
+                        "status": "in_progress",
+                        "call_id": "call-real",
+                        "name": "apply_patch",
+                        "input": ""
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send custom tool call added");
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.custom_tool_call_input.delta",
+                    "item_id": "ctc-real",
+                    "delta": partial_patch,
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send custom tool call input delta");
+            ws.send(Message::Text(
+                json!({
+                    "type": "response.custom_tool_call_input.delta",
+                    "item_id": "ctc-real",
+                    "delta": final_delta,
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("send complete custom tool call input delta");
+            let _ = ws
+                .send(Message::Text(
+                    json!({
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "custom_tool_call",
+                            "id": "ctc-real",
+                            "status": "completed",
+                            "call_id": "call-real",
+                            "name": "apply_patch",
+                            "input": server_patch,
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+            let _ = ws
+                .send(Message::Text(
+                    json!({
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp-too-late",
+                            "usage": {
+                                "input_tokens": 1,
+                                "output_tokens": 1,
+                                "total_tokens": 2,
+                            },
+                        },
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await;
+
+            let close = tokio::time::timeout(Duration::from_secs(1), ws.next())
+                .await
+                .expect("client should close promptly after complete custom tool input delta");
+            assert!(
+                matches!(close, None | Some(Err(_))),
+                "client should drop the TCP connection without a websocket close frame: {close:?}"
+            );
+        });
+
+        let (mut ws_stream, _, _, _, _) = connect_websocket(
+            Url::parse(&format!("ws://{addr}/responses")).expect("valid websocket url"),
+            HeaderMap::new(),
+            /*turn_state*/ None,
+        )
+        .await
+        .expect("connect websocket");
+        let (tx_event, mut rx_event) = mpsc::channel(16);
+
+        let result = run_websocket_response_stream(
+            json!({
+                "type": "response.create",
+                "parallel_tool_calls": false,
+            })
+            .to_string(),
+            WebsocketResponseStreamOptions {
+                ws_stream: &mut ws_stream,
+                tx_event,
+                idle_timeout: Duration::from_secs(5),
+                telemetry: None,
+                connection_reused: false,
+                turn_state: None,
+                early_final_answer_tool_name: Some("final_answer".to_string()),
+            },
+        )
+        .await
+        .expect("websocket response stream should finish early");
+
+        assert_eq!(result, WebsocketResponseStreamEnd::ClosedEarly);
+        assert!(matches!(
+            rx_event.recv().await.expect("output item added event"),
+            Ok(ResponseEvent::OutputItemAdded(ResponseItem::CustomToolCall { name, .. }))
+                if name == "apply_patch"
+        ));
+        assert!(matches!(
+            rx_event.recv().await.expect("custom tool input delta event"),
+            Ok(ResponseEvent::ToolCallInputDelta {
+                item_id,
+                call_id,
+                delta,
+            }) if item_id == "ctc-real" && call_id.is_none() && delta == partial_patch
+        ));
+        let early_tool_call = rx_event
+            .recv()
+            .await
+            .expect("early tool call event")
+            .expect("early tool call should be ok");
+        let ResponseEvent::EarlyToolCall(item) = early_tool_call else {
+            panic!("expected early tool call event: {early_tool_call:?}");
+        };
+        assert_eq!(
+            item,
+            ResponseItem::CustomToolCall {
+                id: Some("ctc-real".to_string()),
+                status: Some("completed".to_string()),
+                call_id: "call-real".to_string(),
+                name: "apply_patch".to_string(),
+                input: patch,
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+        assert!(rx_event.try_recv().is_err());
+        server.await.expect("server should finish");
+    }
+
     #[test]
     fn parse_wrapped_websocket_error_event_maps_to_transport_http() {
         let payload = json!({
