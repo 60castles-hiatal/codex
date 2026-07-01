@@ -32,6 +32,8 @@ const X_CODEX_TURN_STATE_HEADER: &str = "x-codex-turn-state";
 const OPENAI_MODEL_HEADER: &str = "openai-model";
 const REQUEST_ID_HEADER: &str = "x-request-id";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION: &str = "trusted_access_for_cyber";
+const FINAL_ANSWER_EXTRA_TRIGGER: &str = "\n\nf6d79a07:";
+const FINAL_ANSWER_EXTRA_TRIGGER_ESCAPED: &str = "\\n\\nf6d79a07:";
 
 #[cfg(test)]
 fn spawn_response_stream(
@@ -528,6 +530,43 @@ impl EarlyFinalAnswerState {
         }
     }
 
+    pub(crate) fn observe_text_frame(&mut self, text: &str) -> Option<String> {
+        if !(text.contains("response.output_item.")
+            || text.contains("response.function_call_arguments."))
+        {
+            return None;
+        }
+
+        let event: EarlyFinalAnswerWireEvent = serde_json::from_str(text).ok()?;
+        match event {
+            EarlyFinalAnswerWireEvent::OutputItemAdded { item } => {
+                self.observe_output_item(&item);
+                None
+            }
+            EarlyFinalAnswerWireEvent::OutputItemDone { item } => {
+                self.final_answer_from_done_item(&item)
+            }
+            EarlyFinalAnswerWireEvent::FunctionCallArgumentsDelta {
+                item_id,
+                call_id,
+                delta,
+            } => self.observe_function_call_arguments_delta(
+                item_id.as_deref(),
+                call_id.as_deref(),
+                delta.as_deref(),
+            ),
+            EarlyFinalAnswerWireEvent::FunctionCallArgumentsDone {
+                item_id,
+                call_id,
+                arguments,
+            } => self.observe_function_call_arguments_done(
+                item_id.as_deref(),
+                call_id.as_deref(),
+                arguments.as_deref(),
+            ),
+        }
+    }
+
     fn observe_output_item(&mut self, item: &ResponseItem) {
         if self.is_final_answer_call(item) {
             if let ResponseItem::FunctionCall { id, call_id, .. } = item {
@@ -536,7 +575,7 @@ impl EarlyFinalAnswerState {
                 }
                 self.final_answer_item_ids.insert(call_id.clone());
             }
-        } else if is_non_final_tool_call(item) {
+        } else if self.is_non_final_tool_call(item) {
             self.saw_non_final_tool_call = true;
         }
     }
@@ -600,37 +639,360 @@ impl EarlyFinalAnswerState {
             } if name == &self.tool_name
         )
     }
+
+    fn is_non_final_tool_call(&self, item: &ResponseItem) -> bool {
+        match item {
+            ResponseItem::FunctionCall { .. } => !self.is_final_answer_call(item),
+            ResponseItem::LocalShellCall { .. }
+            | ResponseItem::ToolSearchCall { .. }
+            | ResponseItem::CustomToolCall { .. }
+            | ResponseItem::WebSearchCall { .. }
+            | ResponseItem::ImageGenerationCall { .. } => true,
+            ResponseItem::Message { .. }
+            | ResponseItem::AgentMessage { .. }
+            | ResponseItem::Reasoning { .. }
+            | ResponseItem::FunctionCallOutput { .. }
+            | ResponseItem::CustomToolCallOutput { .. }
+            | ResponseItem::ToolSearchOutput { .. }
+            | ResponseItem::Compaction { .. }
+            | ResponseItem::CompactionTrigger { .. }
+            | ResponseItem::ContextCompaction { .. }
+            | ResponseItem::Other => false,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct EarlyToolCallState {
+    final_answer_tool_name: String,
+    item_keys_by_stream_id: HashMap<String, String>,
+    items_by_key: HashMap<String, ResponseItem>,
+    argument_buffers: HashMap<String, String>,
+}
+
+impl EarlyToolCallState {
+    pub(crate) fn new(final_answer_tool_name: String) -> Self {
+        Self {
+            final_answer_tool_name,
+            item_keys_by_stream_id: HashMap::new(),
+            items_by_key: HashMap::new(),
+            argument_buffers: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn observe_text_frame(&mut self, text: &str) -> Option<ResponseItem> {
+        if !(text.contains("response.output_item.added")
+            || text.contains("response.function_call_arguments.delta"))
+        {
+            return None;
+        }
+
+        let event: EarlyFinalAnswerWireEvent = serde_json::from_str(text).ok()?;
+        match event {
+            EarlyFinalAnswerWireEvent::OutputItemAdded { item } => {
+                self.observe_output_item(&item);
+                None
+            }
+            EarlyFinalAnswerWireEvent::FunctionCallArgumentsDelta {
+                item_id,
+                call_id,
+                delta,
+            } => self.observe_function_call_arguments_delta(
+                item_id.as_deref(),
+                call_id.as_deref(),
+                delta.as_deref(),
+            ),
+            EarlyFinalAnswerWireEvent::OutputItemDone { .. }
+            | EarlyFinalAnswerWireEvent::FunctionCallArgumentsDone { .. } => None,
+        }
+    }
+
+    fn observe_output_item(&mut self, item: &ResponseItem) {
+        let ResponseItem::FunctionCall {
+            id,
+            name,
+            namespace,
+            call_id,
+            ..
+        } = item
+        else {
+            return;
+        };
+        if namespace.is_none() && name == &self.final_answer_tool_name {
+            return;
+        }
+        let key = id.as_ref().unwrap_or(call_id).clone();
+        if let Some(id) = id {
+            self.item_keys_by_stream_id.insert(id.clone(), key.clone());
+        }
+        self.item_keys_by_stream_id
+            .insert(call_id.clone(), key.clone());
+        self.items_by_key.insert(key, item.clone());
+    }
+
+    fn observe_function_call_arguments_delta(
+        &mut self,
+        item_id: Option<&str>,
+        call_id: Option<&str>,
+        delta: Option<&str>,
+    ) -> Option<ResponseItem> {
+        let item_key = self.matching_item_key(item_id, call_id)?.to_string();
+        let arguments = self.argument_buffers.entry(item_key.clone()).or_default();
+        arguments.push_str(delta?);
+        if !arguments_are_complete_json_object(arguments) {
+            return None;
+        }
+
+        let item = self.items_by_key.get(&item_key)?;
+        function_call_item_with_arguments(item, arguments.clone())
+    }
+
+    fn matching_item_key(&self, item_id: Option<&str>, call_id: Option<&str>) -> Option<&str> {
+        item_id
+            .and_then(|id| self.item_keys_by_stream_id.get(id))
+            .or_else(|| call_id.and_then(|id| self.item_keys_by_stream_id.get(id)))
+            .map(String::as_str)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum EarlyFinalAnswerWireEvent {
+    #[serde(rename = "response.output_item.added")]
+    OutputItemAdded { item: ResponseItem },
+    #[serde(rename = "response.output_item.done")]
+    OutputItemDone { item: ResponseItem },
+    #[serde(rename = "response.function_call_arguments.delta")]
+    FunctionCallArgumentsDelta {
+        item_id: Option<String>,
+        call_id: Option<String>,
+        delta: Option<String>,
+    },
+    #[serde(rename = "response.function_call_arguments.done")]
+    FunctionCallArgumentsDone {
+        item_id: Option<String>,
+        call_id: Option<String>,
+        arguments: Option<String>,
+    },
+}
+
+fn arguments_are_complete_json_object(arguments: &str) -> bool {
+    serde_json::from_str::<Value>(arguments).is_ok_and(|value| value.is_object())
+}
+
+fn function_call_item_with_arguments(
+    item: &ResponseItem,
+    arguments: String,
+) -> Option<ResponseItem> {
+    let ResponseItem::FunctionCall {
+        id,
+        name,
+        namespace,
+        call_id,
+        internal_chat_message_metadata_passthrough,
+        ..
+    } = item
+    else {
+        return None;
+    };
+
+    Some(ResponseItem::FunctionCall {
+        id: id.clone(),
+        name: name.clone(),
+        namespace: namespace.clone(),
+        arguments,
+        call_id: call_id.clone(),
+        internal_chat_message_metadata_passthrough: internal_chat_message_metadata_passthrough
+            .clone(),
+    })
 }
 
 fn response_item_from_value(value: Option<&Value>) -> Option<ResponseItem> {
     serde_json::from_value(value?.clone()).ok()
 }
 
-fn is_non_final_tool_call(item: &ResponseItem) -> bool {
-    match item {
-        ResponseItem::FunctionCall { .. } => true,
-        ResponseItem::LocalShellCall { .. }
-        | ResponseItem::ToolSearchCall { .. }
-        | ResponseItem::CustomToolCall { .. }
-        | ResponseItem::WebSearchCall { .. }
-        | ResponseItem::ImageGenerationCall { .. } => true,
-        ResponseItem::Message { .. }
-        | ResponseItem::AgentMessage { .. }
-        | ResponseItem::Reasoning { .. }
-        | ResponseItem::FunctionCallOutput { .. }
-        | ResponseItem::CustomToolCallOutput { .. }
-        | ResponseItem::ToolSearchOutput { .. }
-        | ResponseItem::Compaction { .. }
-        | ResponseItem::CompactionTrigger { .. }
-        | ResponseItem::ContextCompaction { .. }
-        | ResponseItem::Other => false,
+fn final_answer_from_arguments(arguments: &str) -> Option<String> {
+    json_string_field_prefix_before_marker(arguments, "answer")
+        .or_else(|| json_string_field(arguments, "answer").map(strip_final_answer_extra))
+}
+
+fn strip_final_answer_extra(answer: String) -> String {
+    answer
+        .find(FINAL_ANSWER_EXTRA_TRIGGER)
+        .map(|index| answer[..index].trim_end().to_string())
+        .unwrap_or(answer)
+}
+
+fn json_string_field_prefix_before_marker(input: &str, field_name: &str) -> Option<String> {
+    let value_start = json_string_field_value_start(input, field_name)?;
+    json_string_prefix_before_marker(input, value_start)
+}
+
+fn json_string_field(input: &str, field_name: &str) -> Option<String> {
+    let value_start = json_string_field_value_start(input, field_name)?;
+    let value_end = json_string_end(input, value_start)?;
+    serde_json::from_str(&input[value_start..value_end]).ok()
+}
+
+fn json_string_field_value_start(input: &str, field_name: &str) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut cursor = skip_json_whitespace(bytes, 0);
+    if bytes.get(cursor) != Some(&b'{') {
+        return None;
+    }
+    cursor += 1;
+
+    loop {
+        cursor = skip_json_whitespace(bytes, cursor);
+        match bytes.get(cursor) {
+            Some(b'}') | None => return None,
+            Some(b'"') => {}
+            _ => return None,
+        }
+
+        let key_end = json_string_end(input, cursor)?;
+        let key: String = serde_json::from_str(&input[cursor..key_end]).ok()?;
+        cursor = skip_json_whitespace(bytes, key_end);
+        if bytes.get(cursor) != Some(&b':') {
+            return None;
+        }
+        cursor = skip_json_whitespace(bytes, cursor + 1);
+
+        if key == field_name {
+            if bytes.get(cursor) != Some(&b'"') {
+                return None;
+            }
+            return Some(cursor);
+        }
+
+        cursor = json_value_end(input, cursor)?;
+        cursor = skip_json_whitespace(bytes, cursor);
+        match bytes.get(cursor) {
+            Some(b',') => cursor += 1,
+            _ => return None,
+        }
     }
 }
 
-fn final_answer_from_arguments(arguments: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(arguments).ok()?;
-    let answer = value.get("answer")?.as_str()?;
-    Some(answer.to_string())
+fn json_string_prefix_before_marker(input: &str, value_start: usize) -> Option<String> {
+    let bytes = input.as_bytes();
+    if bytes.get(value_start) != Some(&b'"') {
+        return None;
+    }
+
+    let search_start = value_start + 1;
+    let search_end = json_string_end(input, value_start)
+        .map(|end| end.saturating_sub(1))
+        .unwrap_or(input.len());
+    let value_tail = input.get(search_start..search_end)?;
+    let marker_index = [
+        FINAL_ANSWER_EXTRA_TRIGGER_ESCAPED,
+        FINAL_ANSWER_EXTRA_TRIGGER,
+    ]
+    .iter()
+    .filter_map(|marker| value_tail.find(marker))
+    .min()?;
+    let raw_answer = &input[value_start..search_start + marker_index];
+    let candidate = format!("{raw_answer}\"");
+    serde_json::from_str::<String>(&candidate)
+        .ok()
+        .map(|answer| answer.trim_end().to_string())
+}
+
+fn skip_json_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
+    while matches!(bytes.get(cursor), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn json_string_end(input: &str, start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.get(start) != Some(&b'"') {
+        return None;
+    }
+
+    let mut cursor = start + 1;
+    let mut escaped = false;
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        if escaped {
+            escaped = false;
+            cursor += 1;
+            continue;
+        }
+
+        match byte {
+            b'\\' => {
+                escaped = true;
+                cursor += 1;
+            }
+            b'"' => return Some(cursor + 1),
+            _ => cursor += 1,
+        }
+    }
+
+    None
+}
+
+fn json_value_end(input: &str, start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    match bytes.get(start)? {
+        b'"' => json_string_end(input, start),
+        b'{' => json_container_end(input, start, b'{', b'}'),
+        b'[' => json_container_end(input, start, b'[', b']'),
+        b't' if input[start..].starts_with("true") => Some(start + 4),
+        b'f' if input[start..].starts_with("false") => Some(start + 5),
+        b'n' if input[start..].starts_with("null") => Some(start + 4),
+        b'-' | b'0'..=b'9' => Some(json_number_end(bytes, start)),
+        _ => None,
+    }
+}
+
+fn json_container_end(input: &str, start: usize, open: u8, close: u8) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.get(start) != Some(&open) {
+        return None;
+    }
+
+    let mut stack = vec![close];
+    let mut cursor = start + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'"' => cursor = json_string_end(input, cursor)?,
+            b'{' => {
+                stack.push(b'}');
+                cursor += 1;
+            }
+            b'[' => {
+                stack.push(b']');
+                cursor += 1;
+            }
+            b'}' | b']' => {
+                if stack.pop() != Some(bytes[cursor]) {
+                    return None;
+                }
+                cursor += 1;
+                if stack.is_empty() {
+                    return Some(cursor);
+                }
+            }
+            _ => cursor += 1,
+        }
+    }
+
+    None
+}
+
+fn json_number_end(bytes: &[u8], start: usize) -> usize {
+    let mut cursor = start;
+    while !matches!(
+        bytes.get(cursor),
+        None | Some(b' ' | b'\n' | b'\r' | b'\t' | b',' | b'}' | b']')
+    ) {
+        cursor += 1;
+    }
+    cursor
 }
 
 #[cfg(test)]
@@ -965,6 +1327,203 @@ mod tests {
             "item_id": "fc-final",
             "delta": arguments,
         })
+    }
+
+    fn real_tool_added() -> serde_json::Value {
+        json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "fc-real",
+                "name": "update_goal",
+                "arguments": "",
+                "call_id": "call-real",
+            }
+        })
+    }
+
+    #[test]
+    fn early_final_answer_observes_text_frame_arguments_delta() {
+        let mut state = EarlyFinalAnswerState::new("final_answer".to_string());
+
+        assert_eq!(
+            state.observe_text_frame(&final_answer_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &final_answer_arguments_delta(r#"{"answer":"done"}"#).to_string()
+            ),
+            Some("done".to_string())
+        );
+    }
+
+    #[test]
+    fn early_final_answer_observes_answer_before_trailing_marker_is_complete() {
+        let mut state = EarlyFinalAnswerState::new("final_answer".to_string());
+
+        assert_eq!(
+            state.observe_text_frame(&final_answer_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &final_answer_arguments_delta(r#"{"answer":"done"#).to_string()
+            ),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &final_answer_arguments_delta(
+                    r#"\n\nf6d79a07: This is the final answer, there are no more answers after this. All content should be included"#
+                )
+                .to_string()
+            ),
+            Some("done".to_string())
+        );
+    }
+
+    #[test]
+    fn final_answer_arguments_extract_answer_before_object_is_complete() {
+        assert_eq!(
+            final_answer_from_arguments(
+                r#"{"answer":"done\n\nf6d79a07: This is the final answer, there are no more answers after this. All content should be included"#
+            ),
+            Some("done".to_string())
+        );
+    }
+
+    #[test]
+    fn early_final_answer_text_frame_waits_when_real_tool_was_seen() {
+        let mut state = EarlyFinalAnswerState::new("final_answer".to_string());
+        let real_tool = json!({
+            "type": "response.output_item.added",
+            "item": {
+                "type": "function_call",
+                "id": "fc-real",
+                "name": "update_goal",
+                "arguments": "",
+                "call_id": "call-real",
+            }
+        });
+
+        assert_eq!(state.observe_text_frame(&real_tool.to_string()), None);
+        assert_eq!(
+            state.observe_text_frame(&final_answer_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &final_answer_arguments_delta(r#"{"answer":"done"}"#).to_string()
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn early_tool_call_observes_text_frame_when_arguments_parse() {
+        let mut state = EarlyToolCallState::new("final_answer".to_string());
+
+        assert_eq!(
+            state.observe_text_frame(&real_tool_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc-real",
+                    "call_id": "call-real",
+                    "delta": r#"{"status":"in_progress""#,
+                })
+                .to_string()
+            ),
+            None
+        );
+
+        let item = state
+            .observe_text_frame(
+                &json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc-real",
+                    "call_id": "call-real",
+                    "delta": "}",
+                })
+                .to_string(),
+            )
+            .expect("complete arguments should produce a synthetic tool call");
+
+        assert_eq!(
+            item,
+            ResponseItem::FunctionCall {
+                id: Some("fc-real".to_string()),
+                name: "update_goal".to_string(),
+                namespace: None,
+                arguments: r#"{"status":"in_progress"}"#.to_string(),
+                call_id: "call-real".to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+    }
+
+    #[test]
+    fn early_tool_call_accumulates_deltas_across_item_id_and_call_id() {
+        let mut state = EarlyToolCallState::new("final_answer".to_string());
+
+        assert_eq!(
+            state.observe_text_frame(&real_tool_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc-real",
+                    "delta": r#"{"status":"in_progress""#,
+                })
+                .to_string()
+            ),
+            None
+        );
+
+        let item = state
+            .observe_text_frame(
+                &json!({
+                    "type": "response.function_call_arguments.delta",
+                    "call_id": "call-real",
+                    "delta": "}",
+                })
+                .to_string(),
+            )
+            .expect("call_id should map back to the same tool call");
+
+        assert_eq!(
+            item,
+            ResponseItem::FunctionCall {
+                id: Some("fc-real".to_string()),
+                name: "update_goal".to_string(),
+                namespace: None,
+                arguments: r#"{"status":"in_progress"}"#.to_string(),
+                call_id: "call-real".to_string(),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        );
+    }
+
+    #[test]
+    fn early_tool_call_ignores_final_answer_tool() {
+        let mut state = EarlyToolCallState::new("final_answer".to_string());
+
+        assert_eq!(
+            state.observe_text_frame(&final_answer_added().to_string()),
+            None
+        );
+        assert_eq!(
+            state.observe_text_frame(
+                &final_answer_arguments_delta(r#"{"answer":"done"}"#).to_string()
+            ),
+            None
+        );
     }
 
     fn response_completed() -> serde_json::Value {

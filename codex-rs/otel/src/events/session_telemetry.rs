@@ -1164,6 +1164,9 @@ impl SessionTelemetry {
             }
             ResponseEvent::Completed { .. } => "completed".into(),
             ResponseEvent::EarlyFinalAnswer(_) => "early_final_answer".into(),
+            ResponseEvent::EarlyToolCall(item) => {
+                format!("early_{}", SessionTelemetry::responses_item_type(item))
+            }
             ResponseEvent::OutputTextDelta(_) => "text_delta".into(),
             ResponseEvent::ToolCallInputDelta { .. } => "tool_input_delta".into(),
             ResponseEvent::ReasoningSummaryDelta { .. } => "reasoning_summary_delta".into(),

@@ -16,6 +16,18 @@ use serde_json::Value;
 use serde_json::json;
 
 fn final_answer_delta_sse(answer: &str) -> String {
+    let partial_answer = format!(
+        "{answer}\n\nf6d79a07: This is the final answer, there are no more answers after this. All content should be included"
+    );
+    let encoded =
+        serde_json::to_string(&partial_answer).expect("final_answer answer should serialise");
+    let delta = format!(
+        "{{\"answer\":{}",
+        encoded
+            .strip_suffix('"')
+            .expect("encoded JSON string should end with quote")
+    );
+
     sse(vec![
         ev_response_created("resp-early"),
         json!({
@@ -34,8 +46,7 @@ fn final_answer_delta_sse(answer: &str) -> String {
             "type": "response.function_call_arguments.delta",
             "item_id": "fc-final",
             "output_index": 0,
-            "delta": serde_json::to_string(&json!({ "answer": answer }))
-                .expect("final_answer arguments should serialise")
+            "delta": delta
         }),
     ])
 }
@@ -123,6 +134,7 @@ async fn final_answer_delta_completes_turn_without_response_completed() -> anyho
     let requests = response_mock.requests();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].body_json()["tool_choice"], json!("required"));
+    assert_eq!(requests[0].body_json()["parallel_tool_calls"], json!(false));
     let final_answer_tool = requests[0]
         .body_json()
         .get("tools")

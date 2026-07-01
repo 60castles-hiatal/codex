@@ -329,9 +329,9 @@ impl TurnTimingStateInner {
 
 fn response_event_records_turn_ttft(event: &ResponseEvent) -> bool {
     match event {
-        ResponseEvent::OutputItemDone(item) | ResponseEvent::OutputItemAdded(item) => {
-            response_item_records_turn_ttft(item)
-        }
+        ResponseEvent::OutputItemDone(item)
+        | ResponseEvent::OutputItemAdded(item)
+        | ResponseEvent::EarlyToolCall(item) => response_item_records_turn_ttft(item),
         ResponseEvent::OutputTextDelta(_)
         | ResponseEvent::EarlyFinalAnswer(_)
         | ResponseEvent::ReasoningSummaryDelta { .. }

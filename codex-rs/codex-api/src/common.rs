@@ -102,6 +102,9 @@ pub enum ResponseEvent {
     /// Emitted when the stream was intentionally closed after a configured
     /// final-answer tool call yielded parseable arguments.
     EarlyFinalAnswer(String),
+    /// Emitted when the stream was intentionally closed after a real tool
+    /// call yielded parseable arguments.
+    EarlyToolCall(ResponseItem),
     ReasoningSummaryDelta {
         delta: String,
         summary_index: i64,

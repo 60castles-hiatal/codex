@@ -1253,7 +1253,8 @@ pub(crate) fn build_prompt(
     Prompt {
         input,
         tools,
-        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls
+            && !early_hangup_enabled,
         tool_choice: if early_hangup_enabled {
             "required".to_string()
         } else {
@@ -2268,7 +2269,29 @@ async fn try_run_sampling_request(
 
         match event {
             ResponseEvent::Created => {}
-            ResponseEvent::OutputItemDone(item) => {
+            event @ (ResponseEvent::OutputItemDone(_) | ResponseEvent::EarlyToolCall(_)) => {
+                let early_tool_call = matches!(event, ResponseEvent::EarlyToolCall(_));
+                let item = match event {
+                    ResponseEvent::OutputItemDone(item) | ResponseEvent::EarlyToolCall(item) => {
+                        item
+                    }
+                    ResponseEvent::Created
+                    | ResponseEvent::SafetyBuffering(_)
+                    | ResponseEvent::OutputItemAdded(_)
+                    | ResponseEvent::ServerModel(_)
+                    | ResponseEvent::ModelVerifications(_)
+                    | ResponseEvent::TurnModerationMetadata(_)
+                    | ResponseEvent::ServerReasoningIncluded(_)
+                    | ResponseEvent::Completed { .. }
+                    | ResponseEvent::OutputTextDelta(_)
+                    | ResponseEvent::ToolCallInputDelta { .. }
+                    | ResponseEvent::EarlyFinalAnswer(_)
+                    | ResponseEvent::ReasoningSummaryDelta { .. }
+                    | ResponseEvent::ReasoningContentDelta { .. }
+                    | ResponseEvent::ReasoningSummaryPartAdded { .. }
+                    | ResponseEvent::RateLimits(_)
+                    | ResponseEvent::ModelsEtag(_) => unreachable!(),
+                };
                 if let Some((_, mut consumer)) = active_tool_argument_diff_consumer.take()
                     && let Ok(Some(event)) = consumer.finish()
                 {
@@ -2389,6 +2412,12 @@ async fn try_run_sampling_request(
                     last_agent_message = Some(agent_message);
                 }
                 needs_follow_up |= output_result.needs_follow_up;
+                if early_tool_call {
+                    break Ok(SamplingRequestResult {
+                        needs_follow_up: true,
+                        last_agent_message,
+                    });
+                }
                 // todo: remove before stabilizing multi-agent v2
                 if preempt_for_mailbox_mail && sess.input_queue.has_pending_mailbox_items().await {
                     break Ok(SamplingRequestResult {
